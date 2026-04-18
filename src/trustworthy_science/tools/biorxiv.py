@@ -68,6 +68,79 @@ def search_biorxiv(query: str, max_results: int = 10) -> list[PaperStub]:
     return stubs[:max_results]
 
 
+def fetch_biorxiv_fulltext(doi: str) -> str:
+    """Fetch full text of a bioRxiv/medRxiv preprint by DOI.
+
+    Returns the extracted plain text, or empty string if unavailable.
+    Tries the HTML full-text page first (better quality), then PDF.
+    """
+    # Try HTML full text (Europe PMC)
+    europepmc_url = f"https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI:{doi}&resultType=core&format=json"
+    try:
+        r = httpx.get(europepmc_url, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+        results = data.get("resultList", {}).get("result", [])
+        if results:
+            pmcid = results[0].get("pmcid")
+            if pmcid:
+                fulltext_url = f"https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML"
+                r2 = httpx.get(fulltext_url, timeout=30)
+                if r2.status_code == 200:
+                    # Strip XML tags to get plain text
+                    import re as _re
+                    text = _re.sub(r"<[^>]+>", " ", r2.text)
+                    text = _re.sub(r"\s+", " ", text).strip()
+                    if len(text) > 500:
+                        logger.debug("Got Europe PMC full text for bioRxiv DOI %s", doi)
+                        return text
+    except Exception as exc:
+        logger.debug("Europe PMC full text fetch failed for %s: %s", doi, exc)
+
+    # Fallback: download the bioRxiv PDF
+    for server in ("biorxiv", "medrxiv"):
+        pdf_url = f"https://www.{server}.org/content/{doi}.full.pdf"
+        try:
+            r = httpx.get(pdf_url, timeout=30, follow_redirects=True)
+            if r.status_code == 200 and "pdf" in r.headers.get("content-type", ""):
+                from trustworthy_science.tools.pdf_parse import pdf_bytes_to_text
+                text = pdf_bytes_to_text(r.content)
+                if len(text) > 500:
+                    logger.debug("Got %s PDF full text for DOI %s", server, doi)
+                    return text
+        except Exception as exc:
+            logger.debug("%s PDF fetch failed for %s: %s", server, doi, exc)
+
+    return ""
+
+
+def europepmc_pmcid_for_doi(doi: str) -> str | None:
+    """Look up the PMCID for a DOI via the Europe PMC search API.
+
+    Returns the PMCID string (e.g. ``"PMC10157896"``) or ``None`` if not found.
+    This is a lightweight single-field query used only for PMCID discovery.
+    """
+    url = (
+        f"https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+        f"?query=DOI:{doi}&resultType=core&format=json&pageSize=1"
+    )
+    try:
+        cache = get_cache()
+        cached = cache.get("europepmc_pmcid", doi)
+        if cached is not None:
+            return cached or None  # "" stored as sentinel for "not found"
+        r = httpx.get(url, timeout=15)
+        r.raise_for_status()
+        results = r.json().get("resultList", {}).get("result", [])
+        pmcid = results[0].get("pmcid") if results else None
+        # Cache both hits and misses (store "" for not-found to avoid re-querying)
+        cache.set("europepmc_pmcid", pmcid or "", doi)
+        return pmcid or None
+    except Exception as exc:
+        logger.debug("EuropePMC PMCID lookup failed for %s: %s", doi, exc)
+        return None
+
+
 def fetch_biorxiv_by_doi(doi: str) -> PaperStub | None:
     """Fetch preprint metadata from bioRxiv by DOI."""
     url = f"{_BASE}/details/biorxiv/{doi}/na/json"

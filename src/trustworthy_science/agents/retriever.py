@@ -7,7 +7,7 @@ from typing import Any
 
 from trustworthy_science.state import GraphInput, PaperStub
 from trustworthy_science.tools.pubmed import fetch_pubmed_metadata, search_pubmed
-from trustworthy_science.tools.biorxiv import search_biorxiv, fetch_biorxiv_by_doi
+from trustworthy_science.tools.biorxiv import search_biorxiv, fetch_biorxiv_by_doi, europepmc_pmcid_for_doi
 from trustworthy_science.tools.crossref import doi_to_stub, search_crossref
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ def _resolve_dois(dois: list[str]) -> list[PaperStub]:
     stubs = []
     for doi in dois:
         stub = None
-        # Try Crossref first (most complete metadata)
+        # Try Crossref first (most complete structural metadata)
         try:
             stub = doi_to_stub(doi)
         except Exception as exc:
@@ -58,6 +58,33 @@ def _resolve_dois(dois: list[str]) -> list[PaperStub]:
         if stub is None:
             stub = PaperStub(doi=doi, source="unknown")
             logger.warning("Could not resolve DOI: %s", doi)
+        # Enrich with PubMed when Crossref stub is missing abstract or PMID/PMCID.
+        # Crossref often lacks abstracts for paywalled journals; PubMed carries them.
+        if stub and (not stub.abstract or not stub.pmid):
+            try:
+                pmids = search_pubmed(doi, max_results=1)
+                if pmids:
+                    pubmed_stubs = fetch_pubmed_metadata(pmids)
+                    if pubmed_stubs:
+                        pm = pubmed_stubs[0]
+                        if not stub.abstract and pm.abstract:
+                            stub = stub.model_copy(update={"abstract": pm.abstract})
+                        if not stub.pmid and pm.pmid:
+                            stub = stub.model_copy(update={"pmid": pm.pmid})
+                        if not stub.pmcid and pm.pmcid:
+                            stub = stub.model_copy(update={"pmcid": pm.pmcid})
+            except Exception as exc:
+                logger.debug("PubMed enrichment failed for %s: %s", doi, exc)
+        # If still no PMCID, try EuropePMC — it indexes NIH manuscripts and OA
+        # copies that may not yet appear in PubMed's ArticleIdList.
+        if stub and not stub.pmcid:
+            try:
+                pmcid = europepmc_pmcid_for_doi(doi)
+                if pmcid:
+                    stub = stub.model_copy(update={"pmcid": pmcid})
+                    logger.info("[RETRIEVER] EuropePMC found PMCID %s for DOI %s", pmcid, doi)
+            except Exception as exc:
+                logger.debug("EuropePMC PMCID lookup failed for %s: %s", doi, exc)
         stubs.append(stub)
     return stubs
 

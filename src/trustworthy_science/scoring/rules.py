@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+
 from trustworthy_science.state import Flag
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_SOFT_PENALTIES: dict[str, int] = {
     "NO_DATA_DEPOSIT": 8,
@@ -68,12 +72,19 @@ def compute_composite_score(
     soft_penalties = (config or {}).get("soft_flags", {})
     quality_bonuses = (config or {}).get("quality_signals", {})
 
+    logger.info("[SCORE] ── Score Breakdown ──────────────────────────")
+    logger.info("[SCORE] Base score:          %d", base)
+
     # Compute soft penalty total
     total_penalty = 0
     for flag in soft_flags:
         cfg_entry = soft_penalties.get(flag.code, {})
         penalty = cfg_entry.get("penalty", _DEFAULT_SOFT_PENALTIES.get(flag.code, 5))
         total_penalty += penalty
+        logger.info("[SCORE]   Soft flag %-35s  -%d pts", flag.code, penalty)
+
+    if not soft_flags:
+        logger.info("[SCORE]   No soft flags")
 
     # Compute quality bonus total (capped)
     total_bonus = 0
@@ -81,16 +92,33 @@ def compute_composite_score(
         cfg_entry = quality_bonuses.get(flag.code, {})
         bonus = cfg_entry.get("bonus", _DEFAULT_QUALITY_BONUSES.get(flag.code, 3))
         total_bonus += bonus
+        logger.info("[SCORE]   Quality signal %-31s  +%d pts", flag.code, bonus)
+    total_bonus_raw = total_bonus
     total_bonus = min(total_bonus, bonus_cap)
+    if total_bonus_raw > bonus_cap:
+        logger.info("[SCORE]   Quality bonus capped at %d (raw was %d)", bonus_cap, total_bonus_raw)
+
+    if not quality_signals:
+        logger.info("[SCORE]   No quality signals")
 
     # Methods nudge: only when a real methods score is available
     methods_nudge = methods_weight * (methods_score * 100 - 70) if methods_score is not None else 0.0
+    if methods_score is not None:
+        logger.info("[SCORE]   Methods nudge (LLM score=%.2f):  %+.1f pts", methods_score, methods_nudge)
+    else:
+        logger.info("[SCORE]   Methods nudge: skipped (no LLM methods score)")
 
     score = base - total_penalty + total_bonus + methods_nudge
     score = int(max(0, min(100, round(score))))
 
+    logger.info("[SCORE] ─────────────────────────────────────────────")
+    logger.info("[SCORE] Formula: %d - %d (penalties) + %d (bonuses) + %.1f (methods) = %d",
+                base, total_penalty, total_bonus, methods_nudge, score)
+
     # Apply hard flag cap
     if hard_flags:
+        logger.info("[SCORE] ⚠ HARD FLAGS detected: %s → capping score at %d",
+                    [f.code for f in hard_flags], hard_cap)
         score = min(score, hard_cap)
         tier = "Untrusted"
     elif score >= trusted_min:
@@ -99,5 +127,8 @@ def compute_composite_score(
         tier = "Caution"
     else:
         tier = "Untrusted"
+
+    logger.info("[SCORE] FINAL SCORE: %d/100 | TIER: %s", score, tier)
+    logger.info("[SCORE] ─────────────────────────────────────────────")
 
     return score, tier

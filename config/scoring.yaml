@@ -16,16 +16,20 @@ hard_flags:
 
 soft_flags:
   # Each subtracts `penalty` points from composite_score
-  NO_DATA_DEPOSIT:               {penalty: 8}
-  NO_CODE_AVAILABILITY:          {penalty: 5}
-  HIGH_SELF_CITATION:            {penalty: 7}
-  INDUSTRY_ONLY_FUNDING_NO_COI:  {penalty: 7}
-  MISSING_EFFECT_SIZES:          {penalty: 6}
-  SMALL_SAMPLE_UNDERPOWERED:     {penalty: 6}
-  METHODS_INCOMPLETE:            {penalty: 8}
-  FAST_PEER_REVIEW:              {penalty: 4}
-  NO_PREREGISTRATION:            {penalty: 3}
-  HIGH_SELF_CITATION_RATIO:      {penalty: 5}
+  # Reduced penalties — absence of a signal is a mild concern, not proof of bad science
+  NO_DATA_DEPOSIT:               {penalty: 3}   # was 8
+  NO_CODE_AVAILABILITY:          {penalty: 2}   # was 5
+  HIGH_SELF_CITATION:            {penalty: 4}   # was 7
+  INDUSTRY_ONLY_FUNDING_NO_COI:  {penalty: 5}   # was 7
+  MISSING_EFFECT_SIZES:          {penalty: 4}   # was 6
+  SMALL_SAMPLE_UNDERPOWERED:     {penalty: 5}   # was 6
+  METHODS_INCOMPLETE:            {penalty: 6}   # was 8
+  FAST_PEER_REVIEW:              {penalty: 4}   # unchanged
+  NO_PREREGISTRATION:            {penalty: 1}   # was 3
+  HIGH_SELF_CITATION_RATIO:      {penalty: 3}   # was 5
+  VENUE_NOT_IN_DOAJ:             {penalty: 2}   # was 3 (in rules.py default)
+  BENFORDS_LAW_ANOMALY:          {penalty: 6}   # leading-digit distribution anomaly (data fabrication signal)
+  REPLICATION_FAILED:            {penalty: 8}   # known failed replication in SSRP / OSC database
 
 quality_signals:
   # Each adds `bonus` points (capped at quality_bonus_cap total)
@@ -49,33 +53,92 @@ pcurve:
   min_pvalues_required: 5        # need at least this many p-vals before running p-curve
   cluster_ratio_threshold: 0.40  # if >= 40% of p-vals fall in (0.04, 0.05], flag it
 
+paper_type_applicability:
+  # Controls which reproducibility criteria are checked per paper type.
+  # Criteria absent or set to false are silently skipped (no penalty, no bonus).
+  empirical_quantitative:   {data: true,  code: true,  prereg: true}
+  clinical_trial:           {data: true,  code: false, prereg: true}
+  systematic_review_meta:   {data: true,  code: false, prereg: false}  # reviews rarely need code
+  review_narrative:         {data: false, code: false, prereg: false}  # no penalties for reviews
+  theoretical:              {data: false, code: false, prereg: false}  # no penalties for theory
+  computational_methods:    {data: false, code: true,  prereg: false}
+  case_report:              {data: false, code: false, prereg: false}
+  opinion_commentary:       {data: false, code: false, prereg: false}
+
 reproducibility:
   data_repo_patterns:
+    # Official repositories
     - "GEO\\d+"
     - "GSE\\d+"
     - "SRA\\d+"
     - "PRJNA\\d+"
+    - "E-MTAB-\\d+"
+    - "ArrayExpress"
+    - "GigaDB"
     - "zenodo\\.org"
     - "figshare\\.com"
+    - "datadryad\\.org"
+    - "dryad\\.org"
     - "dryad"
     - "OSF\\.io"
+    - "osf\\.io"
+    # Cloud / institutional storage
+    - "s3\\.amazonaws\\.com"
+    - "github\\.com/\\S+/data"
+    - "harvard\\.dataverse"
+    - "dataverse"
+    # Availability statements (broad)
+    - "data\\s+(are\\s+|is\\s+)?available"
+    - "data\\s+(are\\s+)?publicly\\s+available"
+    - "data\\s+(are\\s+)?freely\\s+available"
+    - "data\\s+(?:can\\s+be\\s+)?(?:found|accessed|downloaded)"
+    - "supplementary\\s+(?:data|materials?|information|table|file)"
+    - "deposited\\s+(?:in|at|to)"
+    - "accession\\s+(?:number|code)"
+    - "available\\s+(?:at|from|in|on)\\s+(?:the\\s+)?(?:repository|database|archive)"
+    - "upon\\s+(?:reasonable\\s+)?request"
+    - "data\\s+sharing"
   code_patterns:
-    - "github\\.com"
-    - "gitlab\\.com"
-    - "bitbucket\\.org"
+    - "github\\.com/\\S+"
+    - "gitlab\\.com/\\S+"
+    - "bitbucket\\.org/\\S+"
     - "zenodo.*code"
-    - "code.*available"
-    - "scripts.*available"
+    - "code.*zenodo"
+    - "code\\s+(are\\s+|is\\s+)?available"
+    - "scripts?\\s+(are\\s+|is\\s+)?available"
+    - "software\\s+(is\\s+|are\\s+)?available"
+    - "source\\s+code\\s+(?:is\\s+)?available"
+    - "open.source"
+    - "CRAN"
+    - "Bioconductor"
+    - "PyPI"
+    - "https?://\\S+\\.r$"
+    - "analysis\\s+code"
+    - "code\\s+repository"
   preregistration_patterns:
-    - "ClinicalTrials\\.gov.*NCT\\d+"
+    - "ClinicalTrials\\.gov"
+    - "NCT\\d{8}"
     - "NCT\\d+"
+    - "ISRCTN\\d+"
     - "OSF.*preregistr"
+    - "osf\\.io.*preregistr"
+    - "AsPredicted\\.org"
     - "AsPredicted"
     - "PROSPERO"
+    - "pre-registr"
+    - "preregistr"
+    - "registered\\s+report"
+    - "registered\\s+(?:in|on|with|at)"
+    - "ANZCTR"
+    - "UMIN-CTR"
 
 citation_network:
   self_citation_ratio_threshold: 0.30   # > 30% self-citations = HIGH_SELF_CITATION
   diversity_threshold: 0.50             # < 50% institutional diversity = low diversity
+
+benfords_law:
+  min_numbers: 30          # need ≥30 numeric data values for a reliable test
+  p_threshold: 0.05        # chi-squared p-value below which anomaly is flagged
 
 llm:
   provider: k2                            # k2 | openai | anthropic

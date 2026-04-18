@@ -115,32 +115,77 @@ def publication_metadata_agent(state: PaperState, config: dict | None = None) ->
         )
         soft_flags.append(f)
 
-    # --- COI disclosure ---
+    # --- COI disclosure & funding source analysis ---
     coi_text = ""
+    funding_text = ""
     if state.parsed:
-        coi_text = state.parsed.coi_statement or ""
-    if coi_text.strip():
+        coi_text    = state.parsed.coi_statement or ""
+        funding_text = state.parsed.funding or ""
+
+    combined_text = f"{funding_text} {coi_text}".strip()
+
+    # Named industry funders — more specific than generic "industry" pattern
+    _INDUSTRY_FUNDERS = [
+        "Pfizer", "Merck", "AstraZeneca", "Novartis", "Roche", "Johnson & Johnson",
+        "J&J", "GSK", "GlaxoSmithKline", "Eli Lilly", "Sanofi", "Bayer", "Gilead",
+        "Amgen", "AbbVie", "Bristol.Myers", "BMS", "Biogen", "Genentech",
+        "Regeneron", "Moderna", "Boehringer", "Takeda", "Astellas",
+        r"\bpharma(?:ceutical)?\b", r"\bbiotech\b",
+        r"\bindustry\s+(?:funded|grant|support)\b",
+        r"\bcorporate\s+(?:funded|grant|sponsor)\b",
+        r"\bgrant\s+from\s+[A-Z]",   # "grant from Pfizer" etc.
+    ]
+    _INDEPENDENT_TERMS = re.compile(
+        r"(no\s+conflict|none\s+declared|no\s+competing|no\s+financial|"
+        r"independent|NIH|NSF|Wellcome|MRC|UKRI|government|university|"
+        r"foundation|charitable|non.profit|public\s+funding|NCI|NHLBI|"
+        r"European\s+Research|Horizon\s+2020|CIHR)",
+        re.IGNORECASE,
+    )
+
+    # Find which industry funders are named
+    found_funders: list[str] = []
+    for pattern in _INDUSTRY_FUNDERS:
+        m = re.search(pattern, combined_text, re.IGNORECASE)
+        if m:
+            found_funders.append(m.group(0))
+
+    has_industry_funding = len(found_funders) > 0
+    has_independent      = bool(_INDEPENDENT_TERMS.search(coi_text)) if coi_text else False
+    has_coi_statement    = bool(coi_text.strip())
+
+    if has_coi_statement:
+        funder_detail = f" Funders identified: {', '.join(set(found_funders[:5]))}." if found_funders else ""
         q = Flag(
             tier="quality",
             code="COI_DISCLOSED",
-            message="Conflict of interest statement is present.",
+            message=f"Conflict of interest statement is present.{funder_detail}",
             source_agent="publication_metadata",
+            evidence=[EvidenceQuote(text=coi_text[:200], section="coi_statement")] if coi_text else [],
         )
         quality_signals.append(q)
 
-        # Check for industry-only funding without COI
-        funding = (state.parsed.funding if state.parsed else "") or ""
-        industry_terms = r"(pharma|biotech|genentech|pfizer|novartis|amgen|roche|industry|company|corporate|grant\s+from)"
-        if re.search(industry_terms, funding + " " + coi_text, re.IGNORECASE):
-            independent_terms = r"(no\s+conflict|none|independent|NIH|NSF|Wellcome|MRC|government|university|foundation)"
-            if not re.search(independent_terms, coi_text, re.IGNORECASE):
-                f = Flag(
-                    tier="soft",
-                    code="INDUSTRY_ONLY_FUNDING_NO_COI",
-                    message="Industry funding detected; no independent funding or COI disclaimer evident.",
-                    source_agent="publication_metadata",
-                )
-                soft_flags.append(f)
+    # Flag industry funding without independent oversight or COI disclaimer
+    if has_industry_funding and not has_independent:
+        funder_names = ", ".join(set(found_funders[:4])) if found_funders else "industry source"
+        f = Flag(
+            tier="soft",
+            code="INDUSTRY_ONLY_FUNDING_NO_COI",
+            message=(
+                f"Industry funding detected ({funder_names}) with no independent funding "
+                f"or conflict-of-interest disclaimer evident. Results may be subject to "
+                f"publication bias."
+            ),
+            source_agent="publication_metadata",
+            evidence=[EvidenceQuote(
+                text=combined_text[:200],
+                section="funding",
+            )],
+        )
+        soft_flags.append(f)
+    elif not has_coi_statement and not combined_text.strip():
+        # No funding or COI info at all — mild concern
+        logger.debug("[PUB_META] No COI or funding text found in parsed paper")
 
     # Compute sub-score
     score = 0.70

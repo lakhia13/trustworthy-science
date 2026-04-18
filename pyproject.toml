@@ -20,10 +20,14 @@ dependencies = [
     "numpy>=2.0",
     "rich>=15.0",
     "click>=8.3",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "python-multipart>=0.0.20",
 ]
 
 [project.scripts]
 trustworthy-science = "trustworthy_science.cli:main"
+trustworthy-science-server = "trustworthy_science.server.app:start"
 
 [tool.uv]
 dev-dependencies = [

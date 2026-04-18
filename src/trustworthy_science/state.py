@@ -6,6 +6,17 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field
 import operator
 
+PaperType = Literal[
+    "empirical_quantitative",
+    "clinical_trial",
+    "systematic_review_meta",
+    "review_narrative",
+    "theoretical",
+    "computational_methods",
+    "case_report",
+    "opinion_commentary",
+]
+
 
 # ---------------------------------------------------------------------------
 # Paper stubs & parsed content
@@ -44,6 +55,8 @@ class ParsedPaper(BaseModel):
     coi_statement: str = ""
     submission_date: str | None = None
     acceptance_date: str | None = None
+    # Tracks which fetcher successfully retrieved the text
+    fetch_source: str = "unknown"  # e.g. "bioc", "pmc", "pdf_url", "biorxiv", etc.
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +117,7 @@ class PaperState(BaseModel):
     stub: PaperStub = Field(default_factory=PaperStub)
     parsed: ParsedPaper | None = None
     coverage: Literal["full_text", "abstract_only", "metadata_only"] = "metadata_only"
+    paper_type: PaperType | None = None
 
     # Accumulate results from parallel agent nodes
     sub_scores: Annotated[dict[str, SubScore], operator.or_] = Field(default_factory=dict)
