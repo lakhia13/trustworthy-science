@@ -1,1 +1,0 @@
-1. Make scoring dynamic. So that instead of it following a preset ratio
