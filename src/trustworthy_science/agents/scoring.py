@@ -39,9 +39,18 @@ Respond with plain text only.
 
 def scoring_agent(state: PaperState, config: dict | None = None) -> dict:
     """Node: compute composite score, assign tier, generate narrative summary."""
+    logger.info("[SCORING_AGENT] Starting final scoring for: %s",
+                state.stub.title[:60] if state.stub.title else "Unknown")
+    logger.info("[SCORING_AGENT] Inputs — hard_flags: %d | soft_flags: %d | quality_signals: %d | sub_scores: %s",
+                len(state.hard_flags), len(state.soft_flags), len(state.quality_signals),
+                list(state.sub_scores.keys()))
+
     methods_score: float | None = None
     if "methodology" in state.sub_scores:
         methods_score = state.sub_scores["methodology"].score
+        logger.info("[SCORING_AGENT] LLM methodology score: %.2f", methods_score)
+    else:
+        logger.info("[SCORING_AGENT] No LLM methodology score available")
 
     score, tier = compute_composite_score(
         hard_flags=state.hard_flags,

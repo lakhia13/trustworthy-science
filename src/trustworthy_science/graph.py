@@ -21,6 +21,7 @@ def _make_paper_graph(config: dict | None = None):
     """Build and compile the per-paper credibility evaluation sub-graph."""
     from trustworthy_science.agents.fetch_parse import fetch_and_parse
     from trustworthy_science.agents.retraction_watch import retraction_watch_agent
+    from trustworthy_science.agents.paper_classifier import classify_paper_type
     from trustworthy_science.agents.stats_integrity import stats_integrity_agent
     from trustworthy_science.agents.reproducibility import reproducibility_agent
     from trustworthy_science.agents.citation_network import citation_network_agent
@@ -36,6 +37,9 @@ def _make_paper_graph(config: dict | None = None):
 
     def retraction_node(state: PaperState):
         return retraction_watch_agent(state)
+
+    def classifier_node(state: PaperState):
+        return classify_paper_type(state, config=cfg)
 
     def stats_node(state: PaperState):
         return stats_integrity_agent(state, config=cfg)
@@ -55,16 +59,17 @@ def _make_paper_graph(config: dict | None = None):
     def score_node(state: PaperState):
         return scoring_agent(state, config=cfg)
 
-    # Routing: if paper is retracted, skip parallel agents and go straight to scoring
-    def route_after_retraction(state: PaperState) -> Literal["stats_integrity", "scoring"]:
+    # Routing: if paper is retracted, skip remaining nodes and go straight to scoring
+    def route_after_retraction(state: PaperState) -> Literal["paper_classifier", "scoring"]:
         if state.retracted:
             return "scoring"
-        return "stats_integrity"
+        return "paper_classifier"
 
     builder = StateGraph(PaperState)
 
     builder.add_node("fetch_parse", fetch_node)
     builder.add_node("retraction_watch", retraction_node)
+    builder.add_node("paper_classifier", classifier_node)
     builder.add_node("stats_integrity", stats_node)
     builder.add_node("reproducibility", repro_node)
     builder.add_node("citation_network", citation_node)
@@ -75,15 +80,16 @@ def _make_paper_graph(config: dict | None = None):
     builder.add_edge(START, "fetch_parse")
     builder.add_edge("fetch_parse", "retraction_watch")
 
-    # After retraction check: either short-circuit or fan out to parallel agents
+    # After retraction check: either short-circuit to scoring or classify then analyse
     builder.add_conditional_edges(
         "retraction_watch",
         route_after_retraction,
         {
             "scoring": "scoring",
-            "stats_integrity": "stats_integrity",
+            "paper_classifier": "paper_classifier",
         },
     )
+    builder.add_edge("paper_classifier", "stats_integrity")
 
     # Parallel credibility agents all feed into scoring
     for parallel_node in ("reproducibility", "citation_network", "methodology", "publication_metadata"):

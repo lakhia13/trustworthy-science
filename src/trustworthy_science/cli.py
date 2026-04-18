@@ -35,11 +35,17 @@ def _load_filter(config_path: str) -> "TruthFilter":
 
 @click.group()
 @click.option("--config", default=_DEFAULT_CONFIG, show_default=True, help="Path to scoring config YAML.")
-@click.option("--log-level", default="WARNING", show_default=True)
+@click.option("--log-level", default="WARNING", show_default=True,
+              type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False))
+@click.option("-v", "--verbose", is_flag=True, default=False,
+              help="Enable verbose agent logs (shorthand for --log-level INFO).")
 @click.pass_context
-def cli(ctx: click.Context, config: str, log_level: str) -> None:
+def cli(ctx: click.Context, config: str, log_level: str, verbose: bool) -> None:
     """Trustworthy Science — AI-powered credibility filter for scientific literature."""
-    logging.basicConfig(level=getattr(logging, log_level.upper(), logging.WARNING))
+    if verbose:
+        log_level = "INFO"
+    fmt = "%(message)s" if log_level == "INFO" else "%(levelname)s:%(name)s:%(message)s"
+    logging.basicConfig(level=getattr(logging, log_level.upper(), logging.WARNING), format=fmt)
     ctx.ensure_object(dict)
     ctx.obj["config"] = config
 
@@ -127,13 +133,33 @@ def explain(ctx: click.Context, doi: str) -> None:
     tier = result.get("tier", "Unknown")
     score_val = result.get("score", 0)
     color = _TIER_COLORS.get(tier, "white")
+    coverage = result.get("coverage", "metadata_only")
+
+    # Coverage warning — shown when full text could not be retrieved
+    coverage_warning = ""
+    if coverage == "metadata_only":
+        coverage_warning = (
+            "\n[bold yellow]⚠ Metadata-only scoring (35% confidence)[/] — "
+            "full text was unavailable (paywalled or not open-access). "
+            "Scores may underestimate quality; open-access papers score more accurately."
+        )
+    elif coverage == "abstract_only":
+        coverage_warning = (
+            "\n[dim yellow]△ Abstract-only scoring (60% confidence)[/] — "
+            "full text unavailable; statistical and methods checks are limited."
+        )
+
+    # ASCII score bar
+    filled = round(score_val / 100 * 20)
+    score_bar = f"[{color}]{'█' * filled}{'░' * (20 - filled)}[/] {score_val}/100"
 
     console.print()
     console.print(Panel(
         f"[bold]{result.get('title', doi)}[/]\n"
         f"[dim]{result.get('venue', '')} | {result.get('year', '')}[/]\n\n"
-        f"[bold {color}]Score: {score_val}/100   Tier: {tier}[/]\n\n"
-        f"{result.get('summary', '')}",
+        f"[bold {color}]Tier: {tier}[/]   {score_bar}\n\n"
+        f"{result.get('summary', '')}"
+        f"{coverage_warning}",
         title="Credibility Report",
         border_style=color,
     ))
