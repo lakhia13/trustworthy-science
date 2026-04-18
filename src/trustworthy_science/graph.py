@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import time
 from typing import Any, Literal
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
-from trustworthy_science.state import PaperState, PaperStub, GraphInput, GraphOutput
+from trustworthy_science.state import (
+    DeepResearchState,
+    PaperState,
+    PaperStub,
+    GraphInput,
+    GraphOutput,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +163,7 @@ def _make_multi_graph(config: dict | None = None):
             filtered.append({
                 "title": ps.stub.title,
                 "doi": ps.stub.doi,
+                "pmid": ps.stub.pmid,
                 "year": ps.stub.year,
                 "venue": ps.stub.venue,
                 "score": score,
@@ -166,6 +175,8 @@ def _make_multi_graph(config: dict | None = None):
                 "hard_flags": [f.code for f in (ps.final.hard_flags if ps.final else [])],
                 "soft_flags": [f.code for f in (ps.final.soft_flags if ps.final else [])],
                 "quality_signals": [f.code for f in (ps.final.quality_signals if ps.final else [])],
+                "per_dimension": ps.final.per_dimension if ps.final else [],
+                "structured_report": ps.final.structured_report if ps.final else None,
             })
 
         # Sort: included first, then by score desc
@@ -192,3 +203,138 @@ def _make_multi_graph(config: dict | None = None):
 def build_graph(config: dict | None = None):
     """Return the compiled multi-paper LangGraph graph."""
     return _make_multi_graph(config)
+
+
+# ---------------------------------------------------------------------------
+# Deep Research graph
+# ---------------------------------------------------------------------------
+
+def _make_deep_research_graph(config: dict | None = None):
+    """Build the deep research pipeline graph.
+
+    Node sequence:
+        START → query_generator → parallel_pubmed_fetch → score_all → rag_ingest → END
+
+    The pipeline:
+    1. ``query_generator``      — LLM generates 3-5 PubMed queries from user prompt
+    2. ``parallel_pubmed_fetch``— fans out over queries, fetches PaperStubs
+    3. ``score_all``            — scores every stub through the per-paper sub-graph
+    4. ``rag_ingest``           — filters by min_tier, ingests into ChromaDB
+    """
+    from trustworthy_science.agents.deep_research import generate_queries
+    from trustworthy_science.tools.pubmed import search_pubmed, fetch_pubmed_metadata
+    from trustworthy_science.tools.chroma_store import ingest_papers
+
+    paper_graph = _make_paper_graph(config)
+    cfg = config or {}
+    max_papers = cfg.get("rag", {}).get("max_papers_per_session", 30)
+
+    def query_generator_node(state: DeepResearchState) -> dict:
+        queries = generate_queries(state.user_prompt, config=cfg)
+        # Auto-generate a collection name if not set
+        collection = state.collection_name
+        if not collection:
+            slug = hashlib.sha256(state.user_prompt.encode()).hexdigest()[:12]
+            collection = f"research_{slug}"
+        return {"generated_queries": queries, "collection_name": collection}
+
+    def parallel_pubmed_fetch_node(state: DeepResearchState) -> dict:
+        """Fetch papers for every generated query and return deduplicated stubs."""
+        stubs: list[PaperStub] = []
+        seen: set[str] = set()
+        per_query = max(3, max_papers // max(len(state.generated_queries), 1))
+
+        for query in state.generated_queries:
+            try:
+                pmids = search_pubmed(query, max_results=per_query)
+                new_stubs = fetch_pubmed_metadata(pmids)
+                for stub in new_stubs:
+                    key = stub.doi or stub.pmid or stub.title
+                    if key and key not in seen:
+                        seen.add(key)
+                        stubs.append(stub)
+            except Exception as exc:
+                logger.warning("[DEEP_RESEARCH] PubMed fetch failed for '%s': %s", query, exc)
+
+        # Hard cap to prevent runaway
+        stubs = stubs[:max_papers]
+        logger.info("[DEEP_RESEARCH] Fetched %d unique stubs from %d queries",
+                    len(stubs), len(state.generated_queries))
+        return {"candidate_stubs": stubs}
+
+    def score_all_node(state: DeepResearchState) -> dict:
+        """Score every candidate stub through the per-paper graph."""
+        tier_order = {"Trusted": 2, "Caution": 1, "Untrusted": 0}
+        scored: list[dict] = []
+
+        for stub in state.candidate_stubs:
+            paper_state = PaperState(stub=stub)
+            try:
+                final_state = paper_graph.invoke(paper_state)
+                ps = PaperState(**final_state)
+            except Exception as exc:
+                logger.warning("[DEEP_RESEARCH] Scoring failed for %s: %s", stub.uid, exc)
+                continue
+
+            if ps.final:
+                scored.append({
+                    "title": ps.stub.title,
+                    "doi": ps.stub.doi,
+                    "pmid": ps.stub.pmid,
+                    "year": ps.stub.year,
+                    "venue": ps.stub.venue,
+                    "score": ps.final.composite_score,
+                    "tier": ps.final.tier,
+                    "coverage": ps.final.coverage,
+                    "summary": ps.final.summary,
+                    "hard_flags": [f.code for f in ps.final.hard_flags],
+                    "soft_flags": [f.code for f in ps.final.soft_flags],
+                    "quality_signals": [f.code for f in ps.final.quality_signals],
+                    "structured_report": ps.final.structured_report,
+                })
+
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        logger.info("[DEEP_RESEARCH] Scored %d papers", len(scored))
+        return {"scored_papers": scored}
+
+    def rag_ingest_node(state: DeepResearchState) -> dict:
+        """Filter papers by min_tier and ingest accepted ones into ChromaDB."""
+        tier_order = {"Trusted": 2, "Caution": 1, "Untrusted": 0}
+        min_val = tier_order.get(state.min_tier, 1)
+
+        accepted = [
+            p for p in state.scored_papers
+            if tier_order.get(p.get("tier", "Untrusted"), 0) >= min_val
+        ]
+        logger.info(
+            "[DEEP_RESEARCH] %d/%d papers accepted (min_tier=%s)",
+            len(accepted), len(state.scored_papers), state.min_tier,
+        )
+
+        if accepted and state.collection_name:
+            try:
+                n = ingest_papers(accepted, state.collection_name, config=cfg)
+                logger.info("[DEEP_RESEARCH] Ingested %d chunks into '%s'", n, state.collection_name)
+            except Exception as exc:
+                logger.error("[DEEP_RESEARCH] ChromaDB ingest failed: %s", exc)
+
+        return {"accepted_papers": accepted}
+
+    builder = StateGraph(DeepResearchState)
+    builder.add_node("query_generator", query_generator_node)
+    builder.add_node("parallel_pubmed_fetch", parallel_pubmed_fetch_node)
+    builder.add_node("score_all", score_all_node)
+    builder.add_node("rag_ingest", rag_ingest_node)
+
+    builder.add_edge(START, "query_generator")
+    builder.add_edge("query_generator", "parallel_pubmed_fetch")
+    builder.add_edge("parallel_pubmed_fetch", "score_all")
+    builder.add_edge("score_all", "rag_ingest")
+    builder.add_edge("rag_ingest", END)
+
+    return builder.compile()
+
+
+def build_deep_research_graph(config: dict | None = None):
+    """Return the compiled deep research LangGraph pipeline."""
+    return _make_deep_research_graph(config)

@@ -1,4 +1,4 @@
-"""Trustworthy Science CLI — score, filter, and explain scientific papers."""
+"""Trustworthy Science CLI — score, filter, explain, and search scientific papers."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
 from rich import box
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
 console = Console()
 
@@ -92,6 +93,115 @@ def score(ctx: click.Context, doi: tuple[str], pmid: tuple[str], query: str | No
 
 
 # ---------------------------------------------------------------------------
+# search command — text query with live progress
+# ---------------------------------------------------------------------------
+
+@cli.command()
+@click.argument("query")
+@click.option("--top-k", default=10, show_default=True, help="Number of papers to retrieve and score.")
+@click.option("--min-tier", type=click.Choice(["Trusted", "Caution", "Untrusted"]), default="Untrusted",
+              show_default=True, help="Only display papers at or above this tier.")
+@click.option("--output", type=click.Choice(["table", "json"]), default="table", show_default=True)
+@click.pass_context
+def search(ctx: click.Context, query: str, top_k: int, min_tier: str, output: str) -> None:
+    """Search PubMed for QUERY, score all results and display a credibility table.
+
+    Example:
+
+      trustworthy-science search "CRISPR cancer therapy" --top-k 5
+    """
+    from trustworthy_science.tools.pubmed import search_pubmed, fetch_pubmed_metadata
+    from trustworthy_science.state import PaperState
+    from trustworthy_science.graph import _make_paper_graph
+
+    tf = _load_filter(ctx.obj["config"])
+
+    console.print(f"\n[bold blue]Searching PubMed:[/] [italic]{query}[/]")
+
+    with console.status("[blue]Fetching paper list from PubMed...[/]"):
+        try:
+            pmids = search_pubmed(query, max_results=top_k)
+            stubs = fetch_pubmed_metadata(pmids)
+        except Exception as exc:
+            console.print(f"[red]PubMed search failed: {exc}[/]")
+            sys.exit(1)
+
+    if not stubs:
+        console.print("[yellow]No papers found for that query.[/]")
+        sys.exit(0)
+
+    console.print(f"[dim]Retrieved {len(stubs)} papers. Scoring...[/]\n")
+
+    paper_graph = _make_paper_graph(tf._config)
+    results: list[dict] = []
+
+    tier_order = {"Trusted": 2, "Caution": 1, "Untrusted": 0}
+    min_tier_val = tier_order.get(min_tier, 0)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+        transient=False,
+    ) as progress:
+        task = progress.add_task("Scoring papers", total=len(stubs))
+        for stub in stubs:
+            progress.update(task, description=f"Scoring: {stub.title[:55]}..." if stub.title else "Scoring...")
+            paper_state = PaperState(stub=stub)
+            try:
+                final_state = paper_graph.invoke(paper_state)
+                ps = PaperState(**final_state)
+            except Exception as exc:
+                logging.getLogger(__name__).warning("Scoring failed for %s: %s", stub.uid, exc)
+                progress.advance(task)
+                continue
+
+            if ps.final:
+                results.append({
+                    "title": ps.stub.title,
+                    "doi": ps.stub.doi,
+                    "pmid": ps.stub.pmid,
+                    "year": ps.stub.year,
+                    "venue": ps.stub.venue,
+                    "score": ps.final.composite_score,
+                    "tier": ps.final.tier,
+                    "include": tier_order.get(ps.final.tier, 0) >= min_tier_val,
+                    "coverage": ps.final.coverage,
+                    "fetch_source": ps.parsed.fetch_source if ps.parsed else "unknown",
+                    "summary": ps.final.summary,
+                    "hard_flags": [f.code for f in ps.final.hard_flags],
+                    "soft_flags": [f.code for f in ps.final.soft_flags],
+                    "quality_signals": [f.code for f in ps.final.quality_signals],
+                    "per_dimension": ps.final.per_dimension,
+                    "structured_report": ps.final.structured_report,
+                })
+            progress.advance(task)
+
+    if not results:
+        console.print("[yellow]No papers could be scored.[/]")
+        sys.exit(0)
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    filtered = [r for r in results if r.get("include", True)]
+
+    console.print()
+    if output == "json":
+        # Serialize structured_report as dict
+        for r in results:
+            if r.get("structured_report") is not None:
+                r["structured_report"] = r["structured_report"].model_dump()
+            r["per_dimension"] = [d.model_dump() if hasattr(d, "model_dump") else d for d in r.get("per_dimension", [])]
+        console.print_json(json.dumps(results, indent=2, default=str))
+        return
+
+    console.print(f"[bold]Results for:[/] [italic]{query}[/]")
+    console.print(f"[dim]{len(filtered)}/{len(results)} papers meet minimum tier '{min_tier}'[/]\n")
+    _print_results_table(filtered if filtered else results)
+
+
+# ---------------------------------------------------------------------------
 # filter command
 # ---------------------------------------------------------------------------
 
@@ -122,7 +232,7 @@ def filter_cmd(ctx: click.Context, query: str, top_k: int, min_tier: str, output
 
 
 # ---------------------------------------------------------------------------
-# explain command
+# explain command — structured multi-section output
 # ---------------------------------------------------------------------------
 
 @cli.command()
@@ -130,7 +240,7 @@ def filter_cmd(ctx: click.Context, query: str, top_k: int, min_tier: str, output
 @click.option("--pmid", default=None, help="PMID of the paper to explain. Uses BioC JSON full-text (PMC OA) when available.")
 @click.pass_context
 def explain(ctx: click.Context, doi: str | None, pmid: str | None) -> None:
-    """Show a detailed per-dimension credibility explanation for a single paper.
+    """Show a detailed per-dimension credibility report for a single paper.
 
     Accepts either a DOI or a PMID.  When a PMID is supplied, full text is
     fetched via the BioC JSON API (Step 1 of the cascade), which provides
@@ -163,67 +273,161 @@ def explain(ctx: click.Context, doi: str | None, pmid: str | None) -> None:
         console.print(f"[red]Could not score paper with {label}[/]")
         sys.exit(1)
 
+    _render_structured_report(result, doi or pmid)
+
+
+# ---------------------------------------------------------------------------
+# Rendering helpers
+# ---------------------------------------------------------------------------
+
+def _render_structured_report(result: dict, identifier: str | None) -> None:
+    """Render a full structured credibility report to the terminal."""
     tier = result.get("tier", "Unknown")
     score_val = result.get("score", 0)
     color = _TIER_COLORS.get(tier, "white")
     coverage = result.get("coverage", "metadata_only")
     fetch_source = result.get("fetch_source", "unknown")
 
-    # Coverage warning — shown when full text could not be retrieved
-    coverage_warning = ""
+    # Coverage note
     if coverage == "full_text" and fetch_source == "bioc":
-        coverage_warning = (
-            "\n[bold green]✓ Full text via BioC JSON (PMID, PMC Open Access)[/] — "
+        coverage_note = (
+            "[bold green]Full text via BioC JSON (PMC Open Access)[/] — "
             "structured sections used for maximum analysis accuracy."
         )
     elif coverage == "metadata_only":
-        coverage_warning = (
-            "\n[bold yellow]⚠ Metadata-only scoring (35% confidence)[/] — "
-            "full text was unavailable (paywalled or not open-access). "
-            "Scores may underestimate quality; open-access papers score more accurately."
+        coverage_note = (
+            "[bold yellow]Metadata-only scoring (35% confidence)[/] — "
+            "full text was unavailable (paywalled or not open-access)."
         )
     elif coverage == "abstract_only":
-        coverage_warning = (
-            "\n[dim yellow]△ Abstract-only scoring (60% confidence)[/] — "
+        coverage_note = (
+            "[dim yellow]Abstract-only scoring (60% confidence)[/] — "
             "full text unavailable; statistical and methods checks are limited."
         )
+    else:
+        coverage_note = f"[dim]Coverage: {coverage} | Source: {fetch_source}[/]"
 
     # ASCII score bar
     filled = round(score_val / 100 * 20)
     score_bar = f"[{color}]{'█' * filled}{'░' * (20 - filled)}[/] {score_val}/100"
 
+    # ── Header Panel ────────────────────────────────────────────────────────
     console.print()
     console.print(Panel(
-        f"[bold]{result.get('title', doi)}[/]\n"
+        f"[bold]{result.get('title', identifier)}[/]\n"
         f"[dim]{result.get('venue', '')} | {result.get('year', '')}[/]\n\n"
         f"[bold {color}]Tier: {tier}[/]   {score_bar}\n\n"
-        f"{result.get('summary', '')}"
-        f"{coverage_warning}",
+        f"{coverage_note}",
         title="Credibility Report",
         border_style=color,
     ))
 
-    if result.get("hard_flags"):
-        console.print("\n[bold red]Hard Flags (critical)[/]")
-        for flag in result["hard_flags"]:
-            console.print(f"  [red]HARD[/] {flag}")
+    # Retrieve structured report (may be a dict from API or a Pydantic model)
+    sr = result.get("structured_report")
 
-    if result.get("soft_flags"):
-        console.print("\n[bold yellow]Soft Flags (concerns)[/]")
-        for flag in result["soft_flags"]:
-            console.print(f"  [yellow]SOFT[/] {flag}")
+    # Normalise: accept both Pydantic model and plain dict
+    if sr is not None and hasattr(sr, "model_dump"):
+        sr = sr.model_dump()
 
-    if result.get("quality_signals"):
-        console.print("\n[bold green]Quality Signals (positive)[/]")
-        for flag in result["quality_signals"]:
-            console.print(f"  [green]GOOD[/] {flag}")
+    if sr:
+        # ── Overall Verdict ──────────────────────────────────────────────────
+        if sr.get("overall_verdict"):
+            console.print(Panel(
+                sr["overall_verdict"],
+                title="Overall Verdict",
+                border_style=color,
+                padding=(0, 1),
+            ))
+
+        # ── Score Breakdown Table ────────────────────────────────────────────
+        breakdown = sr.get("score_breakdown", [])
+        if breakdown:
+            tbl = Table(
+                title="Score Breakdown",
+                box=box.ROUNDED,
+                show_header=True,
+                header_style="bold blue",
+                expand=False,
+            )
+            tbl.add_column("Dimension", style="bold", min_width=20)
+            tbl.add_column("Score", width=8, justify="center")
+            tbl.add_column("Rationale", ratio=1)
+
+            for entry in breakdown:
+                dim = entry.get("dimension", "")
+                pct = entry.get("score_pct", 0)
+                rationale = entry.get("rationale", "")
+                if pct >= 70:
+                    row_color = "green"
+                elif pct >= 45:
+                    row_color = "yellow"
+                else:
+                    row_color = "red"
+                tbl.add_row(
+                    dim,
+                    f"[{row_color}]{pct}%[/]",
+                    rationale,
+                )
+            console.print()
+            console.print(tbl)
+
+        # ── Key Concerns ─────────────────────────────────────────────────────
+        concerns = sr.get("key_concerns", [])
+        if concerns:
+            concerns_text = "\n".join(f"  • {c}" for c in concerns)
+            console.print()
+            console.print(Panel(
+                concerns_text,
+                title="Key Concerns",
+                border_style="red",
+                padding=(0, 1),
+            ))
+
+        # ── Positive Signals ─────────────────────────────────────────────────
+        positives = sr.get("positive_signals", [])
+        if positives:
+            positives_text = "\n".join(f"  • {p}" for p in positives)
+            console.print()
+            console.print(Panel(
+                positives_text,
+                title="Positive Signals",
+                border_style="green",
+                padding=(0, 1),
+            ))
+
+        # ── Recommendation ───────────────────────────────────────────────────
+        recommendation = sr.get("recommendation", "")
+        if recommendation:
+            console.print()
+            console.print(Panel(
+                f"[bold]{recommendation}[/]",
+                title="Recommendation",
+                border_style=color,
+                padding=(0, 1),
+            ))
+    else:
+        # Fallback: render the flat summary and old-style flag lists
+        summary = result.get("summary", "")
+        if summary:
+            console.print(Panel(summary, title="Verdict", border_style=color, padding=(0, 1)))
+
+        if result.get("hard_flags"):
+            console.print("\n[bold red]Hard Flags (critical)[/]")
+            for flag in result["hard_flags"]:
+                console.print(f"  [red]HARD[/] {flag}")
+
+        if result.get("soft_flags"):
+            console.print("\n[bold yellow]Soft Flags (concerns)[/]")
+            for flag in result["soft_flags"]:
+                console.print(f"  [yellow]SOFT[/] {flag}")
+
+        if result.get("quality_signals"):
+            console.print("\n[bold green]Quality Signals (positive)[/]")
+            for flag in result["quality_signals"]:
+                console.print(f"  [green]GOOD[/] {flag}")
 
     console.print()
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _print_results_table(results: list[dict]) -> None:
     table = Table(box=box.ROUNDED, show_header=True, header_style="bold blue")

@@ -1,26 +1,42 @@
+"""Synchronous /score endpoint — backward-compatible shortcut.
+
+Accepts the same ``SearchRequest`` payload as ``POST /api/search`` but returns
+a synchronous ``ScoreResponse`` instead of a background job. Suitable for
+small batches (a few DOIs or PMIDs) where the caller wants an immediate result.
+"""
 from __future__ import annotations
+
 import logging
+
 from fastapi import APIRouter, Depends, HTTPException
-from trustworthy_science.server.schemas import PaperResult, ScoreRequest, ScoreResponse
-from trustworthy_science.server.dependencies import get_truth_filter
+
 from trustworthy_science.api import TruthFilter
+from trustworthy_science.server.dependencies import get_truth_filter
+from trustworthy_science.server.schemas import PaperResult, ScoreResponse, SearchRequest
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-@router.post("", response_model=ScoreResponse, summary="Score papers by DOI, PMID, or query")
-def score_papers(request: ScoreRequest, tf: TruthFilter = Depends(get_truth_filter)) -> ScoreResponse:
-    """Score one or more papers and return trust scores with flags.
+
+@router.post("", response_model=ScoreResponse, summary="Score papers by DOI, PMID, or query (synchronous)")
+def score_papers(
+    request: SearchRequest,
+    tf: TruthFilter = Depends(get_truth_filter),
+) -> ScoreResponse:
+    """Score one or more papers and return results immediately.
 
     Supply any combination of:
     - **dois**: list of DOI strings
-    - **pmids**: list of PubMed IDs (enables BioC JSON full-text fetch)
+    - **pmids**: list of PubMed IDs
     - **query**: natural-language research question (retrieves top_k papers)
+
+    Returns the full list of scored papers in a single response.
+    For large batches, prefer ``POST /api/search`` (async job).
     """
     results: list[PaperResult] = []
-    seen: set[str] = set()  # deduplicate by doi or pmid
+    seen: set[str] = set()
 
-    # Score PMIDs first (highest quality path via BioC JSON)
+    # Score each PMID individually (uses BioC full-text path)
     for pmid in request.pmids:
         try:
             raw = tf.score_single_by_pmid(pmid)
@@ -32,7 +48,7 @@ def score_papers(request: ScoreRequest, tf: TruthFilter = Depends(get_truth_filt
         except Exception as exc:
             logger.warning("PMID %s scoring failed: %s", pmid, exc)
 
-    # Score DOIs / query via multi-paper graph
+    # Score DOIs / text query in a single graph invocation
     if request.dois or request.query:
         try:
             raw_list = tf.score_papers(

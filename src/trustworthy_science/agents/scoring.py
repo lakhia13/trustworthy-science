@@ -3,18 +3,28 @@
 from __future__ import annotations
 
 import logging
+import re
 
-from trustworthy_science.llm import get_llm
+from trustworthy_science.llm import get_llm, strip_think_tokens
 from trustworthy_science.scoring.rules import compute_composite_score
-from trustworthy_science.state import PaperState, TrustReport
+from trustworthy_science.state import (
+    PaperState,
+    ScoreBreakdownEntry,
+    StructuredReport,
+    TrustReport,
+)
 
 logger = logging.getLogger(__name__)
 
-_NARRATIVE_PROMPT = """\
-You are writing a concise peer-review verdict for a scientific paper credibility tool.
+# ---------------------------------------------------------------------------
+# Structured report prompt
+# ---------------------------------------------------------------------------
+
+_STRUCTURED_REPORT_PROMPT = """\
+You are a scientific paper credibility analyst writing a structured peer-review \
+verdict for a research scientist.
 
 Paper: "{title}" ({year})
-
 Composite trust score: {score}/100 — Tier: {tier}
 
 Hard flags raised:
@@ -26,24 +36,46 @@ Soft flags raised:
 Quality signals:
 {quality_signals}
 
-Per-dimension scores:
+Per-dimension scores (0.0 = poor, 1.0 = excellent):
 {per_dimension}
 
-In 3-5 sentences, explain the verdict to a research scientist. 
-- Use "signals of concern" rather than "fraud" or "fake".
-- Be specific — mention the strongest piece of evidence.
-- End with a practical recommendation (e.g. "cite with caution", "safe to include", "exclude from analysis").
-Respond with plain text only.
+Write a structured credibility report using EXACTLY the following section headings \
+(in ALL CAPS) with no markdown, no asterisks, no bullet dashes other than the \
+hyphen-dash shown below. Do not include any section other than these five.
+
+OVERALL VERDICT
+One sentence summarising why this paper received its score and tier. \
+Use "signals of concern" not "fraud" or "fake".
+
+SCORE BREAKDOWN
+One line per dimension in the format: DimensionName | ScorePct | One-sentence rationale.
+ScorePct is the dimension score multiplied by 100 and rounded to the nearest integer.
+
+KEY CONCERNS
+Each concern on its own line starting with "- ". List only the most significant \
+hard and soft flags with a brief plain-English explanation. \
+Write "None" if there are no concerns.
+
+POSITIVE SIGNALS
+Each signal on its own line starting with "- ". List quality signals with a brief \
+plain-English explanation. Write "None" if there are no positive signals.
+
+RECOMMENDATION
+One sentence only: tell the scientist whether to cite with caution, \
+safely include, or exclude the paper.
 """
 
 
 def scoring_agent(state: PaperState, config: dict | None = None) -> dict:
-    """Node: compute composite score, assign tier, generate narrative summary."""
+    """Node: compute composite score, assign tier, generate structured report."""
     logger.info("[SCORING_AGENT] Starting final scoring for: %s",
                 state.stub.title[:60] if state.stub.title else "Unknown")
-    logger.info("[SCORING_AGENT] Inputs — hard_flags: %d | soft_flags: %d | quality_signals: %d | sub_scores: %s",
-                len(state.hard_flags), len(state.soft_flags), len(state.quality_signals),
-                list(state.sub_scores.keys()))
+    logger.info(
+        "[SCORING_AGENT] Inputs — hard_flags: %d | soft_flags: %d | "
+        "quality_signals: %d | sub_scores: %s",
+        len(state.hard_flags), len(state.soft_flags), len(state.quality_signals),
+        list(state.sub_scores.keys()),
+    )
 
     methods_score: float | None = None
     if "methodology" in state.sub_scores:
@@ -60,13 +92,24 @@ def scoring_agent(state: PaperState, config: dict | None = None) -> dict:
         config=config,
     )
 
-    per_dimension = {
-        name: round(sub.score, 3)
+    per_dimension = [
+        {
+            "dimension": name,
+            "score": round(sub.score, 3),
+            "reason": sub.reason,
+        }
         for name, sub in state.sub_scores.items()
-    }
+    ]
 
-    # --- Generate narrative summary ---
-    summary = _generate_narrative(state, score, tier, per_dimension, config)
+    # Generate structured report via LLM (falls back to deterministic if unavailable)
+    structured = _generate_structured_report(
+        state, score, tier,
+        {d["dimension"]: d["score"] for d in per_dimension},
+        config,
+    )
+
+    # Backward-compatible flat summary = overall verdict + recommendation
+    summary = " ".join(filter(None, [structured.overall_verdict, structured.recommendation]))
 
     report = TrustReport(
         composite_score=score,
@@ -77,25 +120,31 @@ def scoring_agent(state: PaperState, config: dict | None = None) -> dict:
         quality_signals=state.quality_signals,
         per_dimension=per_dimension,
         coverage=state.coverage,
+        structured_report=structured,
     )
 
     return {"final": report}
 
 
-def _generate_narrative(
+# ---------------------------------------------------------------------------
+# LLM-based structured report generation
+# ---------------------------------------------------------------------------
+
+def _generate_structured_report(
     state: PaperState,
     score: int,
     tier: str,
     per_dimension: dict[str, float],
     config: dict | None,
-) -> str:
-    """Use LLM to write a 3-5 sentence verdict narrative."""
+) -> StructuredReport:
+    """Use LLM to generate a structured, section-by-section credibility report."""
+
     def _fmt_flags(flags):
         if not flags:
             return "None"
-        return "; ".join(f"{f.code}: {f.message[:80]}" for f in flags[:5])
+        return "; ".join(f"{f.code}: {f.message[:80]}" for f in flags[:6])
 
-    prompt = _NARRATIVE_PROMPT.format(
+    prompt = _STRUCTURED_REPORT_PROMPT.format(
         title=state.stub.title or "Unknown",
         year=state.stub.year or "unknown year",
         score=score,
@@ -107,35 +156,185 @@ def _generate_narrative(
     )
 
     try:
-        llm = get_llm(max_tokens=300, config=config)
+        llm = get_llm(max_tokens=900, config=config)
         from langchain_core.messages import HumanMessage
         response = llm.invoke([HumanMessage(content=prompt)])
-        return response.content.strip()
+        raw = strip_think_tokens(response.content)
+        return _parse_structured_report(raw, score, tier, per_dimension, state)
     except Exception as exc:
-        logger.warning("Narrative generation failed: %s", exc)
-        return _fallback_narrative(score, tier, state)
+        logger.warning("Structured report generation failed: %s", exc)
+        return _fallback_structured_report(score, tier, state, per_dimension)
 
 
-def _fallback_narrative(score: int, tier: str, state: PaperState) -> str:
-    """Deterministic fallback narrative when LLM is unavailable."""
+# ---------------------------------------------------------------------------
+# Structured report parser
+# ---------------------------------------------------------------------------
+
+# Section header regex anchors
+_SECTION_RE = re.compile(
+    r"(OVERALL VERDICT|SCORE BREAKDOWN|KEY CONCERNS|POSITIVE SIGNALS|RECOMMENDATION)",
+    re.IGNORECASE,
+)
+
+
+def _parse_structured_report(
+    raw: str,
+    score: int,
+    tier: str,
+    per_dimension: dict[str, float],
+    state: PaperState,
+) -> StructuredReport:
+    """Tolerantly parse LLM section output into a StructuredReport.
+
+    Falls back gracefully to deterministic values for any missing or
+    malformed section — never raises.
+    """
+    # Split into sections keyed by heading
+    sections: dict[str, str] = {}
+    current_key: str | None = None
+    buffer: list[str] = []
+
+    for line in raw.splitlines():
+        match = _SECTION_RE.match(line.strip())
+        if match:
+            if current_key is not None:
+                sections[current_key.upper()] = "\n".join(buffer).strip()
+            current_key = match.group(1).upper()
+            buffer = []
+        else:
+            buffer.append(line)
+    if current_key is not None:
+        sections[current_key] = "\n".join(buffer).strip()
+
+    # --- Overall verdict ---
+    overall_verdict = sections.get("OVERALL VERDICT", "").strip()
+    if not overall_verdict:
+        overall_verdict = f"Trust score {score}/100 ({tier})."
+
+    # --- Score breakdown ---
+    breakdown: list[ScoreBreakdownEntry] = []
+    breakdown_raw = sections.get("SCORE BREAKDOWN", "")
+    for line in breakdown_raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) >= 3:
+            try:
+                pct = int(re.sub(r"[^\d]", "", parts[1])) if parts[1] else 50
+                breakdown.append(ScoreBreakdownEntry(
+                    dimension=parts[0],
+                    score_pct=min(max(pct, 0), 100),
+                    rationale=parts[2],
+                ))
+            except (ValueError, IndexError):
+                pass
+
+    # Fill from per_dimension data if LLM breakdown was empty / malformed
+    if not breakdown:
+        for dim_name, dim_score in per_dimension.items():
+            breakdown.append(ScoreBreakdownEntry(
+                dimension=dim_name,
+                score_pct=round(dim_score * 100),
+                rationale="",
+            ))
+
+    # --- Key concerns ---
+    concerns: list[str] = []
+    concerns_raw = sections.get("KEY CONCERNS", "")
+    for line in concerns_raw.splitlines():
+        line = line.strip().lstrip("-").strip()
+        if line and line.lower() != "none":
+            concerns.append(line)
+    if not concerns:
+        for f in state.hard_flags[:3]:
+            concerns.append(f"{f.code}: {f.message}")
+        for f in state.soft_flags[:3]:
+            concerns.append(f"{f.code}: {f.message}")
+
+    # --- Positive signals ---
+    positives: list[str] = []
+    positives_raw = sections.get("POSITIVE SIGNALS", "")
+    for line in positives_raw.splitlines():
+        line = line.strip().lstrip("-").strip()
+        if line and line.lower() != "none":
+            positives.append(line)
+    if not positives:
+        for f in state.quality_signals[:3]:
+            positives.append(f"{f.code}: {f.message}")
+
+    # --- Recommendation ---
+    recommendation = sections.get("RECOMMENDATION", "").strip()
+    if not recommendation:
+        if tier == "Trusted":
+            recommendation = "Safe to include in analysis."
+        elif tier == "Caution":
+            recommendation = "Cite with caution; verify key claims independently."
+        else:
+            recommendation = "Exclude from analysis or flag prominently."
+
+    return StructuredReport(
+        overall_verdict=overall_verdict,
+        score_breakdown=breakdown,
+        key_concerns=concerns,
+        positive_signals=positives,
+        recommendation=recommendation,
+        raw_score=score,
+        tier=tier,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Deterministic fallback
+# ---------------------------------------------------------------------------
+
+def _fallback_structured_report(
+    score: int,
+    tier: str,
+    state: PaperState,
+    per_dimension: dict[str, float],
+) -> StructuredReport:
+    """Produce a StructuredReport deterministically when the LLM is unavailable."""
     hard = [f.code for f in state.hard_flags]
     soft = [f.code for f in state.soft_flags]
     quality = [f.code for f in state.quality_signals]
 
-    parts = [f"Composite trust score: {score}/100 (Tier: {tier})."]
-
     if hard:
-        parts.append(f"Critical issues detected: {', '.join(hard)}.")
-    if soft:
-        parts.append(f"Concerns raised: {', '.join(soft[:4])}.")
-    if quality:
-        parts.append(f"Positive signals: {', '.join(quality[:3])}.")
+        overall_verdict = (
+            f"Trust score {score}/100 ({tier}). Critical issues: {', '.join(hard[:3])}."
+        )
+    elif soft:
+        overall_verdict = (
+            f"Trust score {score}/100 ({tier}). Concerns: {', '.join(soft[:3])}."
+        )
+    else:
+        overall_verdict = f"Trust score {score}/100 ({tier}). No critical issues detected."
+
+    breakdown = [
+        ScoreBreakdownEntry(
+            dimension=dim,
+            score_pct=round(v * 100),
+            rationale=state.sub_scores[dim].reason if dim in state.sub_scores else "",
+        )
+        for dim, v in per_dimension.items()
+    ]
+
+    concerns = [f"{f.code}: {f.message}" for f in (state.hard_flags + state.soft_flags)[:5]]
+    positives = [f"{f.code}: {f.message}" for f in state.quality_signals[:3]]
 
     if tier == "Trusted":
-        parts.append("Recommendation: Safe to include in analysis.")
+        recommendation = "Safe to include in analysis."
     elif tier == "Caution":
-        parts.append("Recommendation: Cite with caution; verify key claims independently.")
+        recommendation = "Cite with caution; verify key claims independently."
     else:
-        parts.append("Recommendation: Exclude from analysis or flag prominently.")
+        recommendation = "Exclude from analysis or flag prominently."
 
-    return " ".join(parts)
+    return StructuredReport(
+        overall_verdict=overall_verdict,
+        score_breakdown=breakdown,
+        key_concerns=concerns,
+        positive_signals=positives,
+        recommendation=recommendation,
+        raw_score=score,
+        tier=tier,
+    )
