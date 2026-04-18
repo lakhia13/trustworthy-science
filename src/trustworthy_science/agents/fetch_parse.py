@@ -8,7 +8,6 @@ from trustworthy_science.state import ParsedPaper, PaperState
 from trustworthy_science.tools.pubmed import fetch_pmc_fulltext
 from trustworthy_science.tools.pdf_parse import fetch_pdf_text, segment_sections
 from trustworthy_science.tools.biorxiv import fetch_biorxiv_fulltext
-from trustworthy_science.tools.unpaywall import fetch_unpaywall_fulltext
 from trustworthy_science.tools.author_search import fetch_author_fulltext
 
 logger = logging.getLogger(__name__)
@@ -80,26 +79,9 @@ def fetch_and_parse(state: PaperState) -> dict:
         logger.info("[FETCH] Step 3: Skipped bioRxiv (%s)",
                     "already have text" if full_text else "no DOI")
 
-    # 4. Try Unpaywall (legal free OA copies of paywalled papers)
+    # 4. Try Semantic Scholar open-access PDF / arXiv mirror
     if not full_text and stub.doi:
-        logger.info("[FETCH] Step 4: Trying Unpaywall (DOI=%s) ...", stub.doi)
-        try:
-            full_text = fetch_unpaywall_fulltext(stub.doi)
-            if full_text.strip():
-                coverage = "full_text"
-                source_used = "unpaywall"
-                logger.info("[FETCH] ✓ Unpaywall SUCCESS — %d chars retrieved", len(full_text))
-            else:
-                logger.info("[FETCH] ✗ Unpaywall: no OA version found")
-        except Exception as exc:
-            logger.info("[FETCH] ✗ Unpaywall failed: %s", exc)
-    else:
-        logger.info("[FETCH] Step 4: Skipped Unpaywall (%s)",
-                    "already have text" if full_text else "no DOI")
-
-    # 5. Try Semantic Scholar open-access PDF / arXiv mirror
-    if not full_text and stub.doi:
-        logger.info("[FETCH] Step 5: Trying Semantic Scholar OA PDF (DOI=%s) ...", stub.doi)
+        logger.info("[FETCH] Step 4: Trying Semantic Scholar OA PDF (DOI=%s) ...", stub.doi)
         try:
             full_text = fetch_author_fulltext(stub.doi)
             if full_text.strip():
@@ -111,15 +93,15 @@ def fetch_and_parse(state: PaperState) -> dict:
         except Exception as exc:
             logger.info("[FETCH] ✗ Semantic Scholar failed: %s", exc)
     else:
-        logger.info("[FETCH] Step 5: Skipped Semantic Scholar (%s)",
+        logger.info("[FETCH] Step 4: Skipped Semantic Scholar (%s)",
                     "already have text" if full_text else "no DOI")
 
-    # 6. Fall back to abstract only
+    # 5. Fall back to abstract only
     if not full_text and stub.abstract:
         full_text = stub.abstract
         coverage = "abstract_only"
         source_used = "abstract_fallback"
-        logger.info("[FETCH] Step 6: Fell back to ABSTRACT ONLY (%d chars) — "
+        logger.info("[FETCH] Step 5: Fell back to ABSTRACT ONLY (%d chars) — "
                     "accuracy will be ~60%% for stats/reproducibility checks", len(full_text))
 
     if not full_text:

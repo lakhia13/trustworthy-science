@@ -160,6 +160,7 @@ def _make_multi_graph(config: dict | None = None):
                 "score": score,
                 "tier": tier,
                 "include": include,
+                "coverage": ps.final.coverage if ps.final else ps.coverage,
                 "summary": ps.final.summary if ps.final else "",
                 "hard_flags": [f.code for f in (ps.final.hard_flags if ps.final else [])],
                 "soft_flags": [f.code for f in (ps.final.soft_flags if ps.final else [])],

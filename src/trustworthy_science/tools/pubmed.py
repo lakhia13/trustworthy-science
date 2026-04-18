@@ -99,43 +99,75 @@ def _parse_pubmed_xml(xml_text: str) -> list[PaperStub]:
 
 
 def _article_to_stub(article: ET.Element) -> PaperStub:
-    def text(path: str, default: str = "") -> str:
-        el = article.find(path)
-        return (el.text or "") if el is not None else default
+    # Scope all queries to the correct sub-trees to avoid picking up IDs,
+    # authors, or dates from the paper's reference list.
+    mc = article.find("MedlineCitation")
+    citation_article = mc.find("Article") if mc is not None else None
 
-    pmid = text(".//PMID")
-    title = text(".//ArticleTitle")
-    year_el = article.find(".//PubDate/Year")
-    year = int(year_el.text) if year_el is not None and year_el.text else None
-    journal = text(".//Journal/Title")
-    issn = text(".//ISSN")
+    # PMID — scoped to MedlineCitation only
+    pmid = (mc.findtext("PMID") or "") if mc is not None else ""
 
-    # Authors
-    authors = []
-    for author in article.findall(".//Author"):
-        last = text(".//LastName", "") if (ln := author.find("LastName")) is None else (ln.text or "")
-        fore = text(".//ForeName", "") if (fn := author.find("ForeName")) is None else (fn.text or "")
-        name = f"{fore} {last}".strip()
-        if name:
-            authors.append(name)
+    # Title
+    title = (citation_article.findtext("ArticleTitle") or "") if citation_article is not None else ""
 
-    # Abstract
-    abstract_parts = []
-    for ab in article.findall(".//AbstractText"):
-        if ab.text:
-            abstract_parts.append(ab.text)
+    # Journal + ISSN + Year — scoped to Article/Journal
+    journal_el = citation_article.find("Journal") if citation_article is not None else None
+    journal = (journal_el.findtext("Title") or "") if journal_el is not None else ""
+    issn = (journal_el.findtext("ISSN") or None) if journal_el is not None else None
+    pub_date = (journal_el.find("JournalIssue/PubDate") if journal_el is not None else None)
+    year = None
+    if pub_date is not None:
+        year_text = pub_date.findtext("Year")
+        if not year_text:
+            # Fall back to first 4 digits of MedlineDate (e.g. "2021 Jan-Feb")
+            medline = pub_date.findtext("MedlineDate") or ""
+            year_text = medline[:4] if medline[:4].isdigit() else None
+        if year_text:
+            try:
+                year = int(year_text)
+            except ValueError:
+                pass
+
+    # Authors — iterate the AuthorList directly under Article, not .//Author
+    # which would descend into reference author lists
+    authors: list[str] = []
+    author_list = citation_article.find("AuthorList") if citation_article is not None else None
+    if author_list is not None:
+        for author in author_list.findall("Author"):
+            last = (author.findtext("LastName") or "").strip()
+            fore = (author.findtext("ForeName") or "").strip()
+            name = f"{fore} {last}".strip()
+            if name:
+                authors.append(name)
+
+    # Abstract — scoped to Article/Abstract to avoid any embedded abstracts in references
+    abstract_parts: list[str] = []
+    abstract_el = citation_article.find("Abstract") if citation_article is not None else None
+    if abstract_el is not None:
+        for ab in abstract_el.findall("AbstractText"):
+            if ab.text:
+                abstract_parts.append(ab.text)
     abstract = " ".join(abstract_parts)
 
-    # DOI
-    doi = None
-    for id_el in article.findall(".//ArticleId"):
-        if id_el.get("IdType") == "doi":
-            doi = id_el.text
-            break
+    # DOI and PMCID — scoped to PubmedData/ArticleIdList (the paper's own IDs only).
+    # Using .//ArticleId descends into ReferenceList and picks up cited paper IDs.
+    doi: str | None = None
+    pmcid: str | None = None
+    pubmed_data = article.find("PubmedData")
+    if pubmed_data is not None:
+        id_list = pubmed_data.find("ArticleIdList")
+        if id_list is not None:
+            for id_el in id_list.findall("ArticleId"):
+                id_type = id_el.get("IdType")
+                if id_type == "doi" and doi is None:
+                    doi = id_el.text
+                elif id_type == "pmc" and pmcid is None:
+                    pmcid = id_el.text
 
     return PaperStub(
         doi=doi,
-        pmid=pmid,
+        pmid=pmid or None,
+        pmcid=pmcid,
         title=title,
         authors=authors,
         venue=journal,
