@@ -56,20 +56,29 @@ def cli(ctx: click.Context, config: str, log_level: str, verbose: bool) -> None:
 
 @cli.command()
 @click.option("--doi", multiple=True, help="DOI(s) to score. Can be repeated.")
+@click.option("--pmid", multiple=True, help="PMID(s) to score. Can be repeated. Uses BioC JSON full-text when available.")
 @click.option("--query", default=None, help="Natural-language query to retrieve papers.")
 @click.option("--top-k", default=10, show_default=True, help="Maximum number of papers to retrieve.")
 @click.option("--output", type=click.Choice(["table", "json"]), default="table", show_default=True)
 @click.pass_context
-def score(ctx: click.Context, doi: tuple[str], query: str | None, top_k: int, output: str) -> None:
-    """Score papers by DOI or query and display credibility report."""
+def score(ctx: click.Context, doi: tuple[str], pmid: tuple[str], query: str | None, top_k: int, output: str) -> None:
+    """Score papers by DOI, PMID, or query and display credibility report."""
     tf = _load_filter(ctx.obj["config"])
 
+    results: list = []
     with console.status("[bold blue]Scoring papers...[/]"):
-        results = tf.score_papers(
-            dois=list(doi) if doi else None,
-            query=query,
-            top_k=top_k,
-        )
+        # Score individual PMIDs directly (enables BioC full-text fetch)
+        for p in pmid:
+            r = tf.score_single_by_pmid(p)
+            if r:
+                results.append(r)
+        # Score DOIs / query via the multi-paper graph
+        if doi or query:
+            results += tf.score_papers(
+                dois=list(doi) if doi else None,
+                query=query,
+                top_k=top_k,
+            )
 
     if not results:
         console.print("[yellow]No papers found.[/]")
@@ -117,27 +126,57 @@ def filter_cmd(ctx: click.Context, query: str, top_k: int, min_tier: str, output
 # ---------------------------------------------------------------------------
 
 @cli.command()
-@click.option("--doi", required=True, help="DOI of the paper to explain.")
+@click.option("--doi", default=None, help="DOI of the paper to explain.")
+@click.option("--pmid", default=None, help="PMID of the paper to explain. Uses BioC JSON full-text (PMC OA) when available.")
 @click.pass_context
-def explain(ctx: click.Context, doi: str) -> None:
-    """Show a detailed per-dimension credibility explanation for a single paper."""
+def explain(ctx: click.Context, doi: str | None, pmid: str | None) -> None:
+    """Show a detailed per-dimension credibility explanation for a single paper.
+
+    Accepts either a DOI or a PMID.  When a PMID is supplied, full text is
+    fetched via the BioC JSON API (Step 1 of the cascade), which provides
+    pre-segmented, unicode-clean sections for the highest analysis quality.
+
+    Examples:
+
+      trustworthy-science explain --doi 10.1038/s41586-020-2748-1
+
+      trustworthy-science explain --pmid 23193264
+    """
+    if not doi and not pmid:
+        console.print("[red]Error: provide either --doi or --pmid.[/]")
+        sys.exit(1)
+    if doi and pmid:
+        console.print("[red]Error: provide only one of --doi or --pmid, not both.[/]")
+        sys.exit(1)
+
     tf = _load_filter(ctx.obj["config"])
 
-    with console.status(f"[bold blue]Scoring {doi}...[/]"):
-        result = tf.score_single(doi)
+    identifier = pmid or doi
+    with console.status(f"[bold blue]Scoring {identifier}...[/]"):
+        if pmid:
+            result = tf.score_single_by_pmid(pmid)
+        else:
+            result = tf.score_single(doi)
 
     if result is None:
-        console.print(f"[red]Could not score paper with DOI: {doi}[/]")
+        label = f"PMID: {pmid}" if pmid else f"DOI: {doi}"
+        console.print(f"[red]Could not score paper with {label}[/]")
         sys.exit(1)
 
     tier = result.get("tier", "Unknown")
     score_val = result.get("score", 0)
     color = _TIER_COLORS.get(tier, "white")
     coverage = result.get("coverage", "metadata_only")
+    fetch_source = result.get("fetch_source", "unknown")
 
     # Coverage warning — shown when full text could not be retrieved
     coverage_warning = ""
-    if coverage == "metadata_only":
+    if coverage == "full_text" and fetch_source == "bioc":
+        coverage_warning = (
+            "\n[bold green]✓ Full text via BioC JSON (PMID, PMC Open Access)[/] — "
+            "structured sections used for maximum analysis accuracy."
+        )
+    elif coverage == "metadata_only":
         coverage_warning = (
             "\n[bold yellow]⚠ Metadata-only scoring (35% confidence)[/] — "
             "full text was unavailable (paywalled or not open-access). "

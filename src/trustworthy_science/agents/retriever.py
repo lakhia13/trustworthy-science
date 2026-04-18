@@ -7,7 +7,7 @@ from typing import Any
 
 from trustworthy_science.state import GraphInput, PaperStub
 from trustworthy_science.tools.pubmed import fetch_pubmed_metadata, search_pubmed
-from trustworthy_science.tools.biorxiv import search_biorxiv, fetch_biorxiv_by_doi
+from trustworthy_science.tools.biorxiv import search_biorxiv, fetch_biorxiv_by_doi, europepmc_pmcid_for_doi
 from trustworthy_science.tools.crossref import doi_to_stub, search_crossref
 
 logger = logging.getLogger(__name__)
@@ -75,6 +75,16 @@ def _resolve_dois(dois: list[str]) -> list[PaperStub]:
                             stub = stub.model_copy(update={"pmcid": pm.pmcid})
             except Exception as exc:
                 logger.debug("PubMed enrichment failed for %s: %s", doi, exc)
+        # If still no PMCID, try EuropePMC — it indexes NIH manuscripts and OA
+        # copies that may not yet appear in PubMed's ArticleIdList.
+        if stub and not stub.pmcid:
+            try:
+                pmcid = europepmc_pmcid_for_doi(doi)
+                if pmcid:
+                    stub = stub.model_copy(update={"pmcid": pmcid})
+                    logger.info("[RETRIEVER] EuropePMC found PMCID %s for DOI %s", pmcid, doi)
+            except Exception as exc:
+                logger.debug("EuropePMC PMCID lookup failed for %s: %s", doi, exc)
         stubs.append(stub)
     return stubs
 

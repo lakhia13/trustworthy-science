@@ -205,3 +205,90 @@ def _strip_xml_tags(xml_text: str) -> str:
         return " ".join(root.itertext())
     except Exception:
         return xml_text
+
+
+# ---------------------------------------------------------------------------
+# BioC JSON full-text fetcher (PMID-based, gold-standard structured text)
+# ---------------------------------------------------------------------------
+
+_BIOC_BASE = "https://www.ncbi.nlm.nih.gov/research/bionlp/RESTful/pmcoa.cgi"
+
+# Map BioC infons 'type' values → our internal section keys
+_BIOC_SECTION_MAP: dict[str, str] = {
+    "title":       "title",
+    "abstract":    "abstract",
+    "intro":       "body",
+    "introduction":"body",
+    "methods":     "methods",
+    "materials":   "methods",
+    "results":     "results",
+    "discussion":  "discussion",
+    "conclusion":  "discussion",
+    "conclusions": "discussion",
+    "funding":     "funding",
+    "acknowledgement": "funding",
+    "acknowledgements": "funding",
+    "acknowledgment":  "funding",
+    "acknowledgments": "funding",
+    "coi":         "coi",
+    "conflict":    "coi",
+    "ref":         "references",
+    "references":  "references",
+    "fig_caption": "figures",
+    "table":       "tables",
+    "paragraph":   "body",
+}
+
+
+def fetch_bioc_fulltext(pmid: str) -> tuple[str, dict[str, str]]:
+    """Fetch full text of a paper from PMC via the BioC JSON API using a PMID.
+
+    Returns a tuple of:
+    - ``full_text``: A single string of the entire paper with section labels.
+    - ``sections``: A dict mapping section names (``"abstract"``, ``"methods"``,
+      ``"results"``, ``"discussion"``, ``"funding"``, ``"coi"``, ``"references"``)
+      to their concatenated text.  Empty string if that section was not found.
+
+    Falls back to ``("", {})`` on any error or if the paper is not in the
+    PMC Open Access subset.
+    """
+    cache = get_cache()
+    cached = cache.get("bioc_fulltext", pmid)
+    if cached is not None:
+        return cached["full_text"], cached["sections"]
+
+    url = f"{_BIOC_BASE}/BioC_json/{pmid}/unicode"
+    try:
+        r = httpx.get(url, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as exc:
+        logger.warning("[BioC] Fetch failed for PMID=%s: %s", pmid, exc)
+        return "", {}
+
+    full_parts: list[str] = []
+    section_buckets: dict[str, list[str]] = {}
+
+    documents = data if isinstance(data, list) else data.get("documents", [])
+    for doc in documents:
+        for passage in doc.get("passages", []):
+            infons = passage.get("infons", {})
+            raw_type = (infons.get("type") or infons.get("section_type") or "paragraph").lower()
+            section_key = _BIOC_SECTION_MAP.get(raw_type, "body")
+            text_content = passage.get("text", "").strip()
+            if not text_content:
+                continue
+            full_parts.append(f"[{raw_type.upper()}]\n{text_content}")
+            section_buckets.setdefault(section_key, []).append(text_content)
+
+    full_text = "\n\n".join(full_parts)
+    sections = {k: "\n\n".join(v) for k, v in section_buckets.items()}
+
+    if full_text:
+        cache.set("bioc_fulltext", {"full_text": full_text, "sections": sections}, pmid)
+        logger.info("[BioC] SUCCESS for PMID=%s — %d chars, sections: %s",
+                    pmid, len(full_text), list(sections.keys()))
+    else:
+        logger.info("[BioC] No passages returned for PMID=%s (not in PMC OA?)", pmid)
+
+    return full_text, sections

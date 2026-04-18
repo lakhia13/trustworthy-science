@@ -8,8 +8,8 @@ from typing import Any, Literal
 
 import yaml
 
-from trustworthy_science.graph import build_graph
-from trustworthy_science.state import GraphInput, PaperState, TrustReport
+from trustworthy_science.graph import build_graph, _make_paper_graph
+from trustworthy_science.state import GraphInput, PaperState, PaperStub, TrustReport
 
 logger = logging.getLogger(__name__)
 
@@ -105,3 +105,53 @@ class TruthFilter:
         """Score a single paper by DOI and return the full result dict."""
         results = self.score_papers(dois=[doi], top_k=1)
         return results[0] if results else None
+
+    def score_single_by_pmid(self, pmid: str) -> dict[str, Any] | None:
+        """Score a single paper by PMID and return the full result dict.
+
+        The PMID is used directly for the BioC JSON full-text fetch (Step 1 in
+        the fetch cascade), which provides structured, pre-segmented sections and
+        is the highest-quality source available.  The PubMed metadata fetch also
+        populates DOI, PMCID, authors, journal, and abstract from the same call.
+        """
+        from trustworthy_science.tools.pubmed import fetch_pubmed_metadata
+
+        stubs = fetch_pubmed_metadata([pmid])
+        if not stubs:
+            logger.warning("PMID %s not found in PubMed", pmid)
+            return None
+
+        stub = stubs[0]
+        # Ensure pmid is set even if PubMed XML parsed it into a different field
+        if not stub.pmid:
+            stub = stub.model_copy(update={"pmid": pmid})
+
+        paper_graph = _make_paper_graph(self._config)
+        paper_state = PaperState(stub=stub)
+        try:
+            final_state = paper_graph.invoke(paper_state)
+            ps = PaperState(**final_state)
+        except Exception as exc:
+            logger.error("Paper scoring failed for PMID %s: %s", pmid, exc)
+            return None
+
+        if ps.final is None:
+            return None
+
+        return {
+            "title": ps.stub.title,
+            "doi": ps.stub.doi,
+            "pmid": ps.stub.pmid,
+            "year": ps.stub.year,
+            "venue": ps.stub.venue,
+            "score": ps.final.composite_score,
+            "tier": ps.final.tier,
+            "include": True,
+            "coverage": ps.final.coverage,
+            "fetch_source": ps.parsed.fetch_source if ps.parsed else "unknown",
+            "summary": ps.final.summary,
+            "hard_flags": [f.code for f in ps.final.hard_flags],
+            "soft_flags": [f.code for f in ps.final.soft_flags],
+            "quality_signals": [f.code for f in ps.final.quality_signals],
+            "per_dimension": ps.final.per_dimension,
+        }
