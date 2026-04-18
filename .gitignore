@@ -8,6 +8,15 @@ models/
 .env
 modelcard.md
 data.zip
+
+# Frontend (Vite + React)
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+frontend/pnpm-lock.yaml
+frontend/yarn.lock
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
