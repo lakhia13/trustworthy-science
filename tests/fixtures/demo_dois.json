@@ -1,0 +1,20 @@
+{
+  "retracted_dois": [
+    "10.1016/j.cell.2005.08.039",
+    "10.1126/science.1102896"
+  ],
+  "landmark_dois": [
+    "10.1126/science.1225829",
+    "10.1038/nature14539"
+  ],
+  "questionable_dois": [
+    "10.1016/j.tics.2011.05.006"
+  ],
+  "notes": {
+    "10.1016/j.cell.2005.08.039": "Hwang stem cell fraud — retracted",
+    "10.1126/science.1102896": "Hwang human cloning — retracted",
+    "10.1126/science.1225829": "CRISPR-Cas9 genome editing (Zhang lab) — landmark",
+    "10.1038/nature14539": "AlphaFold / Deep learning — landmark",
+    "10.1016/j.tics.2011.05.006": "Diederik Stapel fraud adjacent — questioned"
+  }
+}

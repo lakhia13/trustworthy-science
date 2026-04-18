@@ -1,0 +1,43 @@
+[project]
+name = "trustworthy-science"
+version = "0.1.0"
+description = "AI-powered credibility filter for scientific literature (Hackathon MVP)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain>=1.2",
+    "langgraph>=1.1",
+    "langchain-openai>=1.1",
+    "langchain-anthropic>=1.4",
+    "langchain-community>=0.4",
+    "pydantic>=2.13",
+    "httpx>=0.28",
+    "pypdf>=6.0",
+    "lxml>=6.0",
+    "streamlit>=1.56",
+    "pyyaml>=6.0",
+    "scipy>=1.17",
+    "numpy>=2.0",
+    "rich>=15.0",
+    "click>=8.3",
+]
+
+[project.scripts]
+trustworthy-science = "trustworthy_science.cli:main"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trustworthy_science"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

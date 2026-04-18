@@ -1,0 +1,86 @@
+# Trustworthy Science — Scoring Configuration
+# All weights are adjustable; reload at runtime with TruthFilter.reload_config()
+
+scoring:
+  base: 70
+  methods_nudge_weight: 0.15   # how much the LLM methods score nudges the composite
+  quality_bonus_cap: 20        # max total bonus from quality signals
+
+hard_flags:
+  # Any of these immediately cap composite_score <= 25 and set tier=Untrusted
+  - RETRACTED
+  - P_HACKING_CLUSTER
+  - PREDATORY_VENUE
+  - OUTCOME_SWITCHING_CONFIRMED
+  - IMAGE_MANIPULATION          # post-MVP
+
+soft_flags:
+  # Each subtracts `penalty` points from composite_score
+  NO_DATA_DEPOSIT:               {penalty: 8}
+  NO_CODE_AVAILABILITY:          {penalty: 5}
+  HIGH_SELF_CITATION:            {penalty: 7}
+  INDUSTRY_ONLY_FUNDING_NO_COI:  {penalty: 7}
+  MISSING_EFFECT_SIZES:          {penalty: 6}
+  SMALL_SAMPLE_UNDERPOWERED:     {penalty: 6}
+  METHODS_INCOMPLETE:            {penalty: 8}
+  FAST_PEER_REVIEW:              {penalty: 4}
+  NO_PREREGISTRATION:            {penalty: 3}
+  HIGH_SELF_CITATION_RATIO:      {penalty: 5}
+
+quality_signals:
+  # Each adds `bonus` points (capped at quality_bonus_cap total)
+  PREREGISTERED:              {bonus: 6}
+  OPEN_DATA:                  {bonus: 6}
+  OPEN_CODE:                  {bonus: 4}
+  INDEPENDENTLY_REPLICATED:   {bonus: 10}
+  DIVERSE_CITATIONS:          {bonus: 4}
+  COI_DISCLOSED:              {bonus: 2}
+  HIGH_IMPACT_VENUE:          {bonus: 3}
+
+tiers:
+  trusted_min: 70
+  caution_min: 45
+  hard_flag_cap: 25
+
+pcurve:
+  # P-curve analysis thresholds
+  phack_window_lo: 0.04
+  phack_window_hi: 0.05
+  min_pvalues_required: 5        # need at least this many p-vals before running p-curve
+  cluster_ratio_threshold: 0.40  # if >= 40% of p-vals fall in (0.04, 0.05], flag it
+
+reproducibility:
+  data_repo_patterns:
+    - "GEO\\d+"
+    - "GSE\\d+"
+    - "SRA\\d+"
+    - "PRJNA\\d+"
+    - "zenodo\\.org"
+    - "figshare\\.com"
+    - "dryad"
+    - "OSF\\.io"
+  code_patterns:
+    - "github\\.com"
+    - "gitlab\\.com"
+    - "bitbucket\\.org"
+    - "zenodo.*code"
+    - "code.*available"
+    - "scripts.*available"
+  preregistration_patterns:
+    - "ClinicalTrials\\.gov.*NCT\\d+"
+    - "NCT\\d+"
+    - "OSF.*preregistr"
+    - "AsPredicted"
+    - "PROSPERO"
+
+citation_network:
+  self_citation_ratio_threshold: 0.30   # > 30% self-citations = HIGH_SELF_CITATION
+  diversity_threshold: 0.50             # < 50% institutional diversity = low diversity
+
+llm:
+  provider: k2                            # k2 | openai | anthropic
+  base_url: "https://api.k2think.ai/v1"
+  model: MBZUAI-IFM/K2-Think-v2
+  temperature: 0
+  max_tokens: 1024
+  methods_critique_max_tokens: 1500
