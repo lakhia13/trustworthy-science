@@ -152,11 +152,20 @@ def _make_multi_graph(config: dict | None = None):
                 score = ps.final.composite_score
                 include = tier_order.get(tier, 0) >= min_tier_val
 
+            # Prefer parsed abstract (richer) over stub abstract
+            abstract = ""
+            if ps.parsed and ps.parsed.abstract:
+                abstract = ps.parsed.abstract
+            elif ps.stub.abstract:
+                abstract = ps.stub.abstract
+
             filtered.append({
                 "title": ps.stub.title,
                 "doi": ps.stub.doi,
                 "year": ps.stub.year,
                 "venue": ps.stub.venue,
+                "authors": ps.stub.authors,
+                "abstract": abstract,
                 "score": score,
                 "tier": tier,
                 "include": include,
@@ -164,6 +173,8 @@ def _make_multi_graph(config: dict | None = None):
                 "hard_flags": [f.code for f in (ps.final.hard_flags if ps.final else [])],
                 "soft_flags": [f.code for f in (ps.final.soft_flags if ps.final else [])],
                 "quality_signals": [f.code for f in (ps.final.quality_signals if ps.final else [])],
+                "per_dimension": ps.final.per_dimension if ps.final else {},
+                "coverage": ps.final.coverage if ps.final else "metadata_only",
             })
 
         # Sort: included first, then by score desc

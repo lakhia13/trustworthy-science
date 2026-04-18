@@ -1,6 +1,6 @@
 import { ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
-import { Home, Search, FileText, Settings, ArrowLeft, FlaskConical, GitCompare } from 'lucide-react';
+import { Home, Search, FileText, Settings, ArrowLeft, FlaskConical, GitCompare, BookOpen } from 'lucide-react';
 
 interface LayoutProps {
   children: ReactNode;
@@ -8,16 +8,17 @@ interface LayoutProps {
 }
 
 const NAV_LINKS = [
-  { to: '/doi', label: 'DOI Search', icon: Search },
-  { to: '/query', label: 'Query', icon: FileText },
-  { to: '/rag', label: 'RAG Compare', icon: GitCompare },
+  { to: '/doi',    label: 'DOI Search',        icon: Search },
+  { to: '/query',  label: 'Query',             icon: FileText },
+  { to: '/review', label: 'Literature Review', icon: BookOpen },
+  { to: '/rag',    label: 'RAG Compare',       icon: GitCompare },
 ];
 
 const MOBILE_NAV = [
-  { to: '/', label: 'Home', icon: Home },
-  { to: '/doi', label: 'DOI', icon: Search },
-  { to: '/query', label: 'Query', icon: FileText },
-  { to: '/rag', label: 'RAG', icon: GitCompare },
+  { to: '/',       label: 'Home',     icon: Home },
+  { to: '/doi',    label: 'DOI',      icon: Search },
+  { to: '/query',  label: 'Query',    icon: FileText },
+  { to: '/review', label: 'Review',   icon: BookOpen },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 

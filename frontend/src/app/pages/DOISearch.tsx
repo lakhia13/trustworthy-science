@@ -17,10 +17,12 @@ export function DOISearch() {
   const [error, setError] = useState<string | null>(null);
 
   const addDoi = () => {
-    const trimmed = inputValue.trim().replace(/^https?:\/\/doi\.org\//i, '');
-    if (trimmed && !dois.includes(trimmed)) {
-      setDois(prev => [...prev, trimmed]);
-    }
+    const lines = inputValue
+      .split(/[\n,]+/)
+      .map(s => s.trim().replace(/^https?:\/\/doi\.org\//i, ''))
+      .filter(Boolean);
+    const newDois = lines.filter(d => !dois.includes(d));
+    if (newDois.length) setDois(prev => [...prev, ...newDois]);
     setInputValue('');
   };
 
@@ -162,6 +164,9 @@ export function DOISearch() {
                 <Plus size={14} /> Add
               </button>
             </div>
+            <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.22)', marginTop: '6px' }}>
+              Tip: paste multiple DOIs separated by newlines or commas
+            </p>
           </div>
 
           {/* Action buttons */}

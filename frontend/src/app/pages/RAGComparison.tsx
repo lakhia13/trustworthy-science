@@ -93,9 +93,15 @@ function PaperRow({ paper, filtered }: { paper: PaperEntry; filtered?: boolean }
 
 export function RAGComparison() {
   const [query, setQuery] = useState(DEFAULT_QUERY);
+  const [queryInput, setQueryInput] = useState(DEFAULT_QUERY);
   const [loading, setLoading] = useState(false);
   const [allPapers, setAllPapers] = useState<PaperEntry[]>([]);
   const [filteredPapers, setFilteredPapers] = useState<PaperEntry[]>([]);
+
+  const handleRunQuery = () => {
+    const q = queryInput.trim();
+    if (q && q !== query) setQuery(q);
+  };
 
   useEffect(() => {
     // Fetch papers when component mounts
@@ -153,23 +159,50 @@ export function RAGComparison() {
             </p>
           </div>
 
-          {/* Query display */}
+          {/* Query input — editable */}
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
-            style={{
-              padding: '16px 20px', borderRadius: '14px', marginBottom: '28px',
-              background: 'rgba(77,136,255,0.06)',
-              border: '1px solid rgba(77,136,255,0.15)',
-            }}
+            style={{ marginBottom: '28px' }}
           >
-            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase' }}>
+            <label style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>
               Research Query
-            </span>
-            <p style={{ fontSize: '15px', color: 'rgba(255,255,255,0.82)', marginTop: '6px', fontStyle: 'italic', lineHeight: 1.5 }}>
-              {query}
-            </p>
+            </label>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <input
+                value={queryInput}
+                onChange={e => setQueryInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleRunQuery()}
+                placeholder="e.g. PCSK9 inhibitors cardiovascular outcomes"
+                style={{
+                  flex: 1, padding: '12px 16px', borderRadius: '12px',
+                  background: 'rgba(77,136,255,0.06)',
+                  border: '1px solid rgba(77,136,255,0.18)',
+                  color: 'rgba(255,255,255,0.85)', fontSize: '14px',
+                  outline: 'none', fontStyle: 'italic',
+                  transition: 'border-color 0.15s',
+                }}
+                onFocus={e => (e.target.style.borderColor = 'rgba(77,136,255,0.45)')}
+                onBlur={e => (e.target.style.borderColor = 'rgba(77,136,255,0.18)')}
+              />
+              <button
+                onClick={handleRunQuery}
+                disabled={loading || !queryInput.trim()}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '7px',
+                  padding: '12px 20px', borderRadius: '12px',
+                  background: queryInput.trim() ? 'linear-gradient(135deg, #4d88ff, #6d6bff)' : 'rgba(255,255,255,0.05)',
+                  color: queryInput.trim() ? 'white' : 'rgba(255,255,255,0.25)',
+                  fontSize: '13px', fontWeight: 600, border: 'none',
+                  cursor: loading || !queryInput.trim() ? 'not-allowed' : 'pointer',
+                  boxShadow: queryInput.trim() ? '0 0 22px rgba(77,136,255,0.35)' : 'none',
+                  transition: 'all 0.2s',
+                }}
+              >
+                <RefreshCw size={14} /> Run
+              </button>
+            </div>
           </motion.div>
 
           {/* Loading state */}
@@ -430,7 +463,7 @@ export function RAGComparison() {
               {/* Actions */}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
                 <button
-                  onClick={() => toast.success('Running new query...')}
+                  onClick={handleRunQuery}
                   style={{
                     display: 'flex', alignItems: 'center', gap: '7px',
                     padding: '11px 20px', borderRadius: '11px',

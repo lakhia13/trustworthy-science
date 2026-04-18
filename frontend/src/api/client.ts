@@ -216,4 +216,141 @@ export function getUserErrorMessage(error: ApiError): string {
   return error.message || 'An unexpected error occurred.';
 }
 
+// ============================================================================
+// Graph RAG — Literature Review Session Types
+// ============================================================================
+
+export interface GraphNode {
+  id: string;
+  title: string;
+  score: number;
+  tier: 'Trusted' | 'Caution' | 'Untrusted';
+  year?: number;
+  venue?: string;
+  hard_flags: string[];
+  soft_flags: string[];
+  quality_signals: string[];
+  val?: number; // visual size hint
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  type: 'CITES' | 'SHARES_TOPIC';
+}
+
+export interface GraphResponse {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  stats: {
+    total_papers: number;
+    trusted: number;
+    caution: number;
+    total_edges: number;
+  };
+}
+
+export interface PaperSummary {
+  doi: string;
+  title: string;
+  score: number;
+  tier: string;
+  reason?: string;
+}
+
+export interface AddPapersResponse {
+  added: PaperSummary[];
+  excluded: PaperSummary[];
+  graph_size: number;
+  graph_stats: Record<string, number>;
+  took_seconds: number;
+}
+
+export interface QueryResponse {
+  answer: string;
+  papers_used: PaperSummary[];
+  graph_size: number;
+  took_seconds: number;
+}
+
+export interface SessionStats {
+  session_id: string;
+  graph_stats: Record<string, number>;
+  query_count: number;
+  total_scored: number;
+  total_added: number;
+  total_excluded: number;
+  created_at: string;
+}
+
+// ============================================================================
+// Graph RAG API Methods
+// ============================================================================
+
+/** Start a new literature review session. Returns the session_id. */
+export async function startReviewSession(): Promise<{ session_id: string }> {
+  try {
+    const response = await client.post<{ session_id: string }>('/review/start');
+    return response.data;
+  } catch (error) {
+    throw formatError(error);
+  }
+}
+
+/** Score papers and add Trusted/Caution ones to the session graph. */
+export async function addPapersToSession(
+  sessionId: string,
+  dois?: string[],
+  query?: string,
+  topK: number = 10
+): Promise<AddPapersResponse> {
+  try {
+    const response = await client.post<AddPapersResponse>(`/review/${sessionId}/add`, {
+      dois: dois || [],
+      query,
+      top_k: topK,
+    });
+    return response.data;
+  } catch (error) {
+    throw formatError(error);
+  }
+}
+
+/** Get the full graph (nodes + edges) for visualization. */
+export async function getSessionGraph(sessionId: string): Promise<GraphResponse> {
+  try {
+    const response = await client.get<GraphResponse>(`/review/${sessionId}/graph`);
+    return response.data;
+  } catch (error) {
+    throw formatError(error);
+  }
+}
+
+/** Query the session's knowledge graph, get LLM answer grounded in trusted papers. */
+export async function querySessionGraph(
+  sessionId: string,
+  question: string,
+  topK: number = 5
+): Promise<QueryResponse> {
+  try {
+    const response = await client.post<QueryResponse>(`/review/${sessionId}/query`, {
+      question,
+      top_k: topK,
+    });
+    return response.data;
+  } catch (error) {
+    throw formatError(error);
+  }
+}
+
+/** Get session statistics. */
+export async function getSessionStats(sessionId: string): Promise<SessionStats> {
+  try {
+    const response = await client.get<SessionStats>(`/review/${sessionId}/stats`);
+    return response.data;
+  } catch (error) {
+    throw formatError(error);
+  }
+}
+
 export default client;

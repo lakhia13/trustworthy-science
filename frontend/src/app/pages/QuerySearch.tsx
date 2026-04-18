@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Filter, Download, GitCompare, Loader2 } from 'lucide-react';
-import { useNavigate } from 'react-router';
+import { Search, Filter, Download, GitCompare, Loader2, Network } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router';
 import { Layout } from '../components/Layout';
 import { PaperCard } from '../components/PaperCard';
 import { Tier } from '../data/mockData';
@@ -43,6 +43,14 @@ export function QuerySearch() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Pre-fill query from landing page recent search click
+  useEffect(() => {
+    if ((location.state as any)?.prefill) {
+      setQuery((location.state as any).prefill);
+    }
+  }, []);
 
   const handleSearch = async () => {
     if (!query.trim()) {
@@ -59,6 +67,13 @@ export function QuerySearch() {
       setResults(response.papers);
       setHasSearched(true);
       toast.success(`Found ${response.papers.length} papers for scoring`);
+      // Save to search history for landing page
+      try {
+        const entry = { id: Date.now().toString(), query: query.trim(), paperCount: response.papers.length, date: new Date().toISOString().slice(0, 10) };
+        const existing = JSON.parse(localStorage.getItem('ts_search_history') || '[]');
+        const deduped = [entry, ...existing.filter((e: any) => e.query !== query.trim())].slice(0, 5);
+        localStorage.setItem('ts_search_history', JSON.stringify(deduped));
+      } catch {}
     } catch (err: any) {
       const message = getUserErrorMessage(err);
       setError(message);
@@ -81,6 +96,15 @@ export function QuerySearch() {
     const next = new Set(selected);
     next.has(id) ? next.delete(id) : next.add(id);
     setSelected(next);
+  };
+
+  const handleSendToReview = () => {
+    const selectedDois = results
+      .filter(p => selected.has(p.doi || ''))
+      .map(p => p.doi)
+      .filter(Boolean) as string[];
+    sessionStorage.setItem('ts_review_seed_dois', JSON.stringify(selectedDois));
+    navigate('/review');
   };
 
   return (
@@ -357,6 +381,38 @@ export function QuerySearch() {
                       Try lowering the minimum tier to &ldquo;Any&rdquo;.
                     </p>
                   </div>
+                )}
+
+                {/* Sticky "Add to Knowledge Graph" bar */}
+                {selected.size > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 16 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    style={{
+                      position: 'sticky', bottom: '72px',
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '12px 18px', borderRadius: '14px', marginTop: '20px',
+                      background: 'rgba(0,230,118,0.08)',
+                      border: '1px solid rgba(0,230,118,0.25)',
+                      backdropFilter: 'blur(12px)',
+                    }}
+                  >
+                    <span style={{ fontSize: '13px', color: '#00e676', fontWeight: 600 }}>
+                      {selected.size} paper{selected.size !== 1 ? 's' : ''} selected
+                    </span>
+                    <button
+                      onClick={handleSendToReview}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '7px',
+                        padding: '9px 16px', borderRadius: '9px',
+                        background: 'linear-gradient(135deg, rgba(0,230,118,0.2), rgba(77,136,255,0.15))',
+                        border: '1px solid rgba(0,230,118,0.3)', color: '#00e676',
+                        fontSize: '12px', fontWeight: 600, cursor: 'pointer',
+                      }}
+                    >
+                      <Network size={14} /> Add to Knowledge Graph
+                    </button>
+                  </motion.div>
                 )}
               </motion.div>
             )}

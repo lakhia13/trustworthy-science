@@ -4,6 +4,8 @@ import { Save, RotateCcw } from 'lucide-react';
 import { Layout } from '../components/Layout';
 import { toast } from 'sonner';
 
+const STORAGE_KEY = 'ts_settings_v1';
+
 interface Weight {
   key: string;
   label: string;
@@ -81,10 +83,35 @@ function SectionLabel({ title }: { title: string }) {
 }
 
 export function Settings() {
-  const [weights, setWeights] = useState<Weight[]>(DEFAULT_WEIGHTS);
-  const [thresholds, setThresholds] = useState(TIER_THRESHOLDS);
-  const [defaultTopK, setDefaultTopK] = useState('10');
-  const [defaultTier, setDefaultTier] = useState('any');
+  const [weights, setWeights] = useState<Weight[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) { const p = JSON.parse(saved); if (p.weights) return p.weights; }
+    } catch {}
+    return DEFAULT_WEIGHTS;
+  });
+  const [thresholds, setThresholds] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) { const p = JSON.parse(saved); if (p.thresholds) return p.thresholds; }
+    } catch {}
+    return TIER_THRESHOLDS;
+  });
+  const [defaultTopK, setDefaultTopK] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) { const p = JSON.parse(saved); if (p.defaultTopK) return p.defaultTopK; }
+    } catch {}
+    return '10';
+  });
+  const [defaultTier, setDefaultTier] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) { const p = JSON.parse(saved); if (p.defaultTier) return p.defaultTier; }
+    } catch {}
+    return 'any';
+  });
+  const [saved, setSaved] = useState(false);
 
   const changeWeight = (key: string, v: number) =>
     setWeights(ws => ws.map(w => w.key === key ? { ...w, value: v } : w));
@@ -92,9 +119,15 @@ export function Settings() {
   const changeThreshold = (key: string, v: number) =>
     setThresholds(ts => ts.map(t => t.key === key ? { ...t, value: v } : t));
 
-  const handleSave = () => toast.success('Settings saved successfully');
+  const handleSave = () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ weights, thresholds, defaultTopK, defaultTier }));
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+    toast.success('Settings saved');
+  };
 
   const handleReset = () => {
+    localStorage.removeItem(STORAGE_KEY);
     setWeights(DEFAULT_WEIGHTS);
     setThresholds(TIER_THRESHOLDS);
     setDefaultTopK('10');
@@ -216,7 +249,7 @@ export function Settings() {
           </div>
 
           {/* Save / Reset */}
-          <div style={{ display: 'flex', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <button
               onClick={handleSave}
               style={{
@@ -229,6 +262,11 @@ export function Settings() {
             >
               <Save size={15} /> Save Settings
             </button>
+            {saved && (
+              <span style={{ fontSize: '13px', color: '#00e676', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                ✓ Saved
+              </span>
+            )}
             <button
               onClick={handleReset}
               style={{

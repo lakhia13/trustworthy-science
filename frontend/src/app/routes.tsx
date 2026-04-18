@@ -4,6 +4,7 @@ import { DOISearch } from './pages/DOISearch';
 import { QuerySearch } from './pages/QuerySearch';
 import { PaperDetail } from './pages/PaperDetail';
 import { RAGComparison } from './pages/RAGComparison';
+import { LiteratureReview } from './pages/LiteratureReview';
 import { Settings } from './pages/Settings';
 
 function NotFound() {
@@ -42,6 +43,7 @@ export const router = createBrowserRouter([
   { path: '/query',      Component: QuerySearch },
   { path: '/paper/:id',  Component: PaperDetail },
   { path: '/rag',        Component: RAGComparison },
+  { path: '/review',     Component: LiteratureReview },
   { path: '/settings',   Component: Settings },
   { path: '*',           Component: NotFound },
 ]);

@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router';
+import { useParams, useSearchParams, useNavigate } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Copy, Download, Share2, ExternalLink,
   CheckCircle, AlertTriangle, XCircle,
-  ChevronDown, ChevronUp, Loader2,
+  ChevronDown, ChevronUp, Loader2, ArrowLeft,
 } from 'lucide-react';
 import {
   RadarChart, PolarGrid, PolarAngleAxis,
@@ -122,7 +122,15 @@ function FlagCard({ flag, type, expanded, onToggle }: {
 }
 
 export function PaperDetail() {
-  const { id: doi } = useParams<{ id: string }>();
+  const { id: encodedDoi } = useParams<{ id: string }>();
+  const doi = encodedDoi ? decodeURIComponent(encodedDoi) : undefined;
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const fromLabel = ({
+    results: 'Results',
+    review: 'Literature Review',
+    doi: 'DOI Search',
+  } as Record<string, string>)[searchParams.get('from') ?? ''] ?? 'Back';
   const [paper, setPaper] = useState<ApiPaper | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -179,6 +187,17 @@ export function PaperDetail() {
     value: (paper.per_dimension?.[key] || 0) * 100,
     fullMark: 100,
   }));
+
+  // Map backend per_dimension keys → frontend Dimensions keys (0-1 → 0-100)
+  const pd = paper.per_dimension || {};
+  const dimensions = {
+    retraction:      Math.round((pd['retraction_watch'] ?? pd['retraction'] ?? 1) * 100),
+    statistics:      Math.round((pd['stats_integrity']  ?? pd['statistics']  ?? 0.7) * 100),
+    reproducibility: Math.round((pd['reproducibility']                        ?? 0.7) * 100),
+    citations:       Math.round((pd['citation_network'] ?? pd['citations']   ?? 0.7) * 100),
+    methodology:     Math.round((pd['methodology']                            ?? 0.7) * 100),
+    venue:           Math.round((pd['publication_metadata'] ?? pd['venue']   ?? 0.7) * 100),
+  };
 
   const toggleFlag = (code: string) =>
     setExpandedFlag(prev => (prev === code ? null : code));
@@ -239,6 +258,30 @@ export function PaperDetail() {
           transition={{ ease: [0.16, 1, 0.3, 1] }}
           style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}
         >
+          {/* ── Breadcrumb ── */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '16px' }}>
+            <button
+              onClick={() => navigate(-1)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: '5px',
+                color: 'rgba(255,255,255,0.35)', fontSize: '12px',
+                padding: '4px 0', transition: 'color 0.15s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.75)')}
+              onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.35)')}
+            >
+              <ArrowLeft size={13} /> {fromLabel}
+            </button>
+            <span style={{ color: 'rgba(255,255,255,0.12)', fontSize: '12px' }}>/</span>
+            <span style={{
+              fontSize: '12px', color: 'rgba(255,255,255,0.4)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '300px',
+            }}>
+              {paper?.title ?? doi}
+            </span>
+          </div>
+
           {/* ── Paper header ── */}
           <div style={{
             padding: '24px', borderRadius: '16px',
@@ -334,7 +377,7 @@ export function PaperDetail() {
               <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', marginBottom: '18px' }}>
                 Per-Dimension Scores
               </p>
-              <DimensionBars dimensions={paper.dimensions} />
+              <DimensionBars dimensions={dimensions} />
             </div>
 
             {/* Radar chart */}

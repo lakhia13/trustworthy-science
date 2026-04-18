@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from trustworthy_science.service import get_truth_filter
 from trustworthy_science.routes.papers import router as papers_router
+from trustworthy_science.routes.review import router as review_router
 
 # Configure logging
 logging.basicConfig(
@@ -43,9 +44,14 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",  # Dev frontend
-        "http://localhost:3000",  # Alternative dev frontend
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
+        "http://localhost:5176",
+        "http://localhost:3000",
         "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175",
         "http://127.0.0.1:3000",
     ],
     allow_credentials=True,
@@ -124,9 +130,10 @@ async def general_error_handler(request, exc):
 # ============================================================================
 
 app.include_router(papers_router, prefix="/api", tags=["papers"])
-
-# Also expose papers router at root for convenience
 app.include_router(papers_router, tags=["papers"])
+
+# Graph RAG — Literature Review Sessions
+app.include_router(review_router, prefix="/review", tags=["review"])
 
 
 if __name__ == "__main__":

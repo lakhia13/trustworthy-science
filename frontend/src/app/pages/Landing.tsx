@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { motion } from 'motion/react';
 import { useNavigate } from 'react-router';
 import { Search, FileSearch, Upload, GitCompare, ChevronRight, Clock, Zap, Shield, BarChart3 } from 'lucide-react';
@@ -51,6 +52,15 @@ const HOW = [
 
 export function Landing() {
   const navigate = useNavigate();
+
+  const [recentSearches] = useState(() => {
+    try {
+      const saved = localStorage.getItem('ts_search_history');
+      const parsed = JSON.parse(saved || '[]');
+      if (parsed.length > 0) return parsed;
+    } catch {}
+    return RECENT_SEARCHES;
+  });
 
   return (
     <Layout>
@@ -164,6 +174,27 @@ export function Landing() {
               }}
             >
               Search Literature
+            </button>
+            <button
+              onClick={() => navigate('/review')}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '8px',
+                padding: '13px 26px', borderRadius: '12px',
+                background: 'rgba(0,230,118,0.08)',
+                border: '1px solid rgba(0,230,118,0.22)',
+                color: '#00e676', fontSize: '14px', fontWeight: 600,
+                cursor: 'pointer', transition: 'background 0.15s, transform 0.15s',
+              }}
+              onMouseEnter={e => {
+                (e.currentTarget as HTMLElement).style.background = 'rgba(0,230,118,0.14)';
+                (e.currentTarget as HTMLElement).style.transform = 'translateY(-1px)';
+              }}
+              onMouseLeave={e => {
+                (e.currentTarget as HTMLElement).style.background = 'rgba(0,230,118,0.08)';
+                (e.currentTarget as HTMLElement).style.transform = 'translateY(0)';
+              }}
+            >
+              🕸 Literature Review
             </button>
           </motion.div>
         </div>
@@ -305,10 +336,10 @@ export function Landing() {
             </span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {RECENT_SEARCHES.map(s => (
+            {recentSearches.map((s: any) => (
               <div
                 key={s.id}
-                onClick={() => navigate('/query')}
+                onClick={() => navigate('/query', { state: { prefill: s.query } })}
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   padding: '14px 18px', borderRadius: '12px',
