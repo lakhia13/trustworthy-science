@@ -125,16 +125,6 @@ class StructuredReport(BaseModel):
 
 
 class TrustReport(BaseModel):
-    """Final credibility report for a single paper.
-
-    Dimension names in ``per_dimension`` (ASAS pipeline):
-      - librarian  : venue legitimacy, funding COI, author consistency
-      - detective  : statistical integrity, shadow data verification
-      - coder      : reproducibility depth, GitHub repo health
-      - peer       : adversarial red-teaming, citation context (scite.ai)
-      - methodology: LLM methods critique (drives methods_nudge)
-      - citation_network: self-citation ratio, institutional diversity
-    """
     composite_score: int = Field(ge=0, le=100)
     tier: Literal["Trusted", "Caution", "Untrusted"]
     summary: str = ""
@@ -158,10 +148,6 @@ class PaperState(BaseModel):
     parsed: ParsedPaper | None = None
     coverage: Literal["full_text", "abstract_only", "metadata_only"] = "metadata_only"
     paper_type: PaperType | None = None
-
-    # Optional enrichment fields (populated by ASAS agents when available)
-    github_repo_url: str | None = None   # detected GitHub repo URL for the paper's code
-    scite_data: dict | None = None       # citation context data from scite.ai (if API key set)
 
     # Accumulate results from parallel agent nodes
     sub_scores: Annotated[dict[str, SubScore], operator.or_] = Field(default_factory=dict)

@@ -21,14 +21,6 @@ _DEFAULT_SOFT_PENALTIES: dict[str, int] = {
     "FAST_PEER_REVIEW": 4,
     "NO_PREREGISTRATION": 3,
     "VENUE_NOT_IN_DOAJ": 3,
-    # Previously missing — added by ASAS Phase 0 bug-fix
-    "BENFORDS_LAW_ANOMALY": 6,
-    "REPLICATION_FAILED": 8,
-    # New ASAS flags
-    "INTERNAL_INCONSISTENCY": 8,
-    "CLAIM_OVERREACH": 7,
-    "DATA_LINK_BROKEN": 10,
-    "INDUSTRY_COI_UNSTATED": 6,
 }
 
 _DEFAULT_QUALITY_BONUSES: dict[str, int] = {
@@ -39,12 +31,6 @@ _DEFAULT_QUALITY_BONUSES: dict[str, int] = {
     "DIVERSE_CITATIONS": 4,
     "COI_DISCLOSED": 2,
     "HIGH_IMPACT_VENUE": 3,
-    # New ASAS quality signals
-    "OPEN_DATA_PERMANENT": 8,
-    "OPEN_DATA_GENERIC": 4,
-    "OPEN_CODE_FUNCTIONAL": 6,
-    "SUPPORTING_CITATIONS": 5,
-    "DEEP_LIMITATIONS": 3,
 }
 
 _HARD_FLAG_CODES = frozenset([
@@ -52,8 +38,6 @@ _HARD_FLAG_CODES = frozenset([
     "P_HACKING_CLUSTER",
     "PREDATORY_VENUE",
     "OUTCOME_SWITCHING_CONFIRMED",
-    "OUTCOME_SWITCHING",        # alias without _CONFIRMED suffix
-    "DATA_FABRICATION_SIGNS",   # composite: BENFORDS_LAW_ANOMALY + INTERNAL_INCONSISTENCY
     "IMAGE_MANIPULATION",
 ])
 
@@ -78,7 +62,7 @@ def compute_composite_score(
     cfg = (config or {}).get("scoring", {})
     tiers_cfg = (config or {}).get("tiers", {})
 
-    base = int(cfg.get('base_score', cfg.get('base', 70)))
+    base = int(cfg.get("base", 70))
     bonus_cap = int(cfg.get("quality_bonus_cap", 20))
     methods_weight = float(cfg.get("methods_nudge_weight", 0.15))
     trusted_min = int(tiers_cfg.get("trusted_min", 70))

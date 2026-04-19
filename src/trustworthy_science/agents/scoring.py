@@ -8,7 +8,6 @@ import re
 from trustworthy_science.llm import get_llm, strip_think_tokens
 from trustworthy_science.scoring.rules import compute_composite_score
 from trustworthy_science.state import (
-    Flag,
     PaperState,
     ScoreBreakdownEntry,
     StructuredReport,
@@ -39,10 +38,6 @@ Quality signals:
 
 Per-dimension scores and sub-agent notes (0.0 = poor, 1.0 = excellent):
 {per_dimension}
-
-Sub-agent dimensions: librarian (venue/COI), detective (statistical integrity), \
-coder (reproducibility/code health), peer (adversarial review/citations), \
-methodology (LLM methods critique), citation_network (self-citation diversity).
 
 Write a structured credibility report using EXACTLY the following section headings \
 (in ALL CAPS) with no markdown, no asterisks, no bullet dashes other than the \
@@ -84,46 +79,6 @@ def scoring_agent(state: PaperState, config: dict | None = None) -> dict:
         list(state.sub_scores.keys()),
     )
 
-    # --- Soft flag deduplication: keep first occurrence with longest message per code ---
-    deduplicated_soft: list[Flag] = []
-    seen_soft_codes: dict[str, int] = {}  # code -> index in deduplicated_soft
-    for f in state.soft_flags:
-        if f.code not in seen_soft_codes:
-            seen_soft_codes[f.code] = len(deduplicated_soft)
-            deduplicated_soft.append(f)
-        else:
-            # Keep the one with the longer message (more informative)
-            idx = seen_soft_codes[f.code]
-            if len(f.message) > len(deduplicated_soft[idx].message):
-                deduplicated_soft[idx] = f
-    soft_flags_final = deduplicated_soft
-
-    # --- DATA_FABRICATION_SIGNS composition ---
-    # If both BENFORDS_LAW_ANOMALY and INTERNAL_INCONSISTENCY are present as soft flags,
-    # synthesize a DATA_FABRICATION_SIGNS hard flag
-    soft_codes = {f.code for f in soft_flags_final}
-    hard_flags_final = list(state.hard_flags)
-    already_has_fabrication = any(f.code == 'DATA_FABRICATION_SIGNS' for f in hard_flags_final)
-    if (
-        not already_has_fabrication
-        and 'BENFORDS_LAW_ANOMALY' in soft_codes
-        and 'INTERNAL_INCONSISTENCY' in soft_codes
-    ):
-        fabrication_flag = Flag(
-            tier='hard',
-            code='DATA_FABRICATION_SIGNS',
-            message=(
-                'Composite fabrication signal: both Benford\'s Law anomaly and '
-                'Abstract/Results numeric inconsistency detected simultaneously.'
-            ),
-            source_agent='scoring',
-        )
-        hard_flags_final.append(fabrication_flag)
-        logger.warning(
-            '[SCORING_AGENT] DATA_FABRICATION_SIGNS hard flag synthesized '
-            '(BENFORDS_LAW_ANOMALY + INTERNAL_INCONSISTENCY both present)'
-        )
-
     methods_score: float | None = None
     if "methodology" in state.sub_scores:
         methods_score = state.sub_scores["methodology"].score
@@ -132,8 +87,8 @@ def scoring_agent(state: PaperState, config: dict | None = None) -> dict:
         logger.info("[SCORING_AGENT] No LLM methodology score available")
 
     score, tier = compute_composite_score(
-        hard_flags=hard_flags_final,
-        soft_flags=soft_flags_final,
+        hard_flags=state.hard_flags,
+        soft_flags=state.soft_flags,
         quality_signals=state.quality_signals,
         methods_score=methods_score,
         config=config,
@@ -154,8 +109,6 @@ def scoring_agent(state: PaperState, config: dict | None = None) -> dict:
         state, score, tier,
         per_dimension,   # full list[dict] with dimension/score/reason
         config,
-        hard_flags=hard_flags_final,
-        soft_flags=soft_flags_final,
     )
 
     # Backward-compatible flat summary = overall verdict + recommendation
@@ -165,8 +118,8 @@ def scoring_agent(state: PaperState, config: dict | None = None) -> dict:
         composite_score=score,
         tier=tier,
         summary=summary,
-        hard_flags=hard_flags_final,
-        soft_flags=soft_flags_final,
+        hard_flags=state.hard_flags,
+        soft_flags=state.soft_flags,
         quality_signals=state.quality_signals,
         per_dimension=per_dimension,
         coverage=state.coverage,
@@ -186,15 +139,8 @@ def _generate_structured_report(
     tier: str,
     per_dimension: list[dict],  # full list with dimension/score/reason
     config: dict | None,
-    *,
-    hard_flags: list | None = None,
-    soft_flags: list | None = None,
 ) -> StructuredReport:
     """Use LLM to generate a structured, section-by-section credibility report."""
-
-    # Use provided flags (deduplicated/augmented) or fall back to state flags
-    effective_hard = hard_flags if hard_flags is not None else state.hard_flags
-    effective_soft = soft_flags if soft_flags is not None else state.soft_flags
 
     def _fmt_flags(flags):
         if not flags:
@@ -222,8 +168,8 @@ def _generate_structured_report(
         year=state.stub.year or "unknown year",
         score=score,
         tier=tier,
-        hard_flags=_fmt_flags(effective_hard),
-        soft_flags=_fmt_flags(effective_soft),
+        hard_flags=_fmt_flags(state.hard_flags),
+        soft_flags=_fmt_flags(state.soft_flags),
         quality_signals=_fmt_flags(state.quality_signals),
         per_dimension=_fmt_per_dimension(per_dimension),
     )
@@ -233,10 +179,10 @@ def _generate_structured_report(
         from langchain_core.messages import HumanMessage
         response = llm.invoke([HumanMessage(content=prompt)])
         raw = strip_think_tokens(response.content)
-        return _parse_structured_report(raw, score, tier, per_dim_lookup, state, effective_hard, effective_soft)
+        return _parse_structured_report(raw, score, tier, per_dim_lookup, state)
     except Exception as exc:
         logger.warning("Structured report generation failed: %s", exc)
-        return _fallback_structured_report(score, tier, state, per_dim_lookup, effective_hard, effective_soft)
+        return _fallback_structured_report(score, tier, state, per_dim_lookup)
 
 
 # ---------------------------------------------------------------------------
@@ -256,17 +202,12 @@ def _parse_structured_report(
     tier: str,
     per_dim_lookup: dict[str, dict],  # dimension -> {dimension, score, reason}
     state: PaperState,
-    effective_hard: list | None = None,
-    effective_soft: list | None = None,
 ) -> StructuredReport:
     """Tolerantly parse LLM section output into a StructuredReport.
 
     Falls back gracefully to deterministic values for any missing or
     malformed section — never raises.
     """
-    hard_flags_use = effective_hard if effective_hard is not None else state.hard_flags
-    soft_flags_use = effective_soft if effective_soft is not None else state.soft_flags
-
     # Split into sections keyed by heading
     sections: dict[str, str] = {}
     current_key: str | None = None
@@ -327,9 +268,9 @@ def _parse_structured_report(
         if line and line.lower() != "none":
             concerns.append(line)
     if not concerns:
-        for f in hard_flags_use[:3]:
+        for f in state.hard_flags[:3]:
             concerns.append(f"{f.code}: {f.message}")
-        for f in soft_flags_use[:3]:
+        for f in state.soft_flags[:3]:
             concerns.append(f"{f.code}: {f.message}")
 
     # --- Positive signals ---
@@ -373,14 +314,10 @@ def _fallback_structured_report(
     tier: str,
     state: PaperState,
     per_dim_lookup: dict[str, dict],  # dimension -> {dimension, score, reason}
-    effective_hard: list | None = None,
-    effective_soft: list | None = None,
 ) -> StructuredReport:
     """Produce a StructuredReport deterministically when the LLM is unavailable."""
-    hard_flags_use = effective_hard if effective_hard is not None else state.hard_flags
-    soft_flags_use = effective_soft if effective_soft is not None else state.soft_flags
-    hard = [f.code for f in hard_flags_use]
-    soft = [f.code for f in soft_flags_use]
+    hard = [f.code for f in state.hard_flags]
+    soft = [f.code for f in state.soft_flags]
 
     if hard:
         overall_verdict = (
@@ -407,7 +344,7 @@ def _fallback_structured_report(
         for dim, data in per_dim_lookup.items()
     ]
 
-    concerns = [f"{f.code}: {f.message}" for f in (hard_flags_use + soft_flags_use)[:5]]
+    concerns = [f"{f.code}: {f.message}" for f in (state.hard_flags + state.soft_flags)[:5]]
     positives = [f"{f.code}: {f.message}" for f in state.quality_signals[:3]]
 
     if tier == "Trusted":
