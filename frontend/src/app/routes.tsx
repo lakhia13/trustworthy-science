@@ -1,10 +1,8 @@
 import { createBrowserRouter, useNavigate } from 'react-router';
 import { Landing } from './pages/Landing';
 import { DOISearch } from './pages/DOISearch';
-import { QuerySearch } from './pages/QuerySearch';
 import { PaperDetail } from './pages/PaperDetail';
-import { RAGComparison } from './pages/RAGComparison';
-import { LiteratureReview } from './pages/LiteratureReview';
+import { DeepResearch } from './pages/DeepResearch';
 import { Settings } from './pages/Settings';
 
 function NotFound() {
@@ -38,12 +36,10 @@ function NotFound() {
 }
 
 export const router = createBrowserRouter([
-  { path: '/',           Component: Landing },
-  { path: '/doi',        Component: DOISearch },
-  { path: '/query',      Component: QuerySearch },
-  { path: '/paper/:id',  Component: PaperDetail },
-  { path: '/rag',        Component: RAGComparison },
-  { path: '/review',     Component: LiteratureReview },
-  { path: '/settings',   Component: Settings },
-  { path: '*',           Component: NotFound },
+  { path: '/',              Component: Landing },
+  { path: '/doi',           Component: DOISearch },
+  { path: '/paper',          Component: PaperDetail },
+  { path: '/deep-research', Component: DeepResearch },
+  { path: '/settings',      Component: Settings },
+  { path: '*',              Component: NotFound },
 ]);

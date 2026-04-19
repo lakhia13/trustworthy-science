@@ -34,7 +34,7 @@ export function PaperCard({ paper, index, selected, onSelect, showCheckbox }: Pa
       transition={{ duration: 0.32, delay: (index ?? 0) * 0.06, ease: [0.16, 1, 0.3, 1] }}
       onHoverStart={() => setHovered(true)}
       onHoverEnd={() => setHovered(false)}
-      onClick={() => navigate(`/paper/${encodeURIComponent(paper.id)}?from=results`)}
+      onClick={() => navigate(`/paper?doi=${encodeURIComponent(paper.doi || paper.id)}&from=results`)}
       style={{
         position: 'relative',
         padding: '20px',
@@ -172,7 +172,7 @@ export function PaperCard({ paper, index, selected, onSelect, showCheckbox }: Pa
       {/* Actions */}
       <div style={{ display: 'flex', gap: '8px' }} onClick={e => e.stopPropagation()}>
         <button
-          onClick={() => navigate(`/paper/${encodeURIComponent(paper.id)}?from=results`)}
+          onClick={() => navigate(`/paper?doi=${encodeURIComponent(paper.doi || paper.id)}&from=results`)}
           style={{
             display: 'flex', alignItems: 'center', gap: '5px',
             padding: '6px 12px', borderRadius: '8px',

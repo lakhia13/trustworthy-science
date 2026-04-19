@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, useSearchParams, useNavigate } from 'react-router';
+import { useSearchParams, useNavigate } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Copy, Download, Share2, ExternalLink,
@@ -14,6 +14,7 @@ import { Layout } from '../components/Layout';
 import { ScoreRing } from '../components/ScoreRing';
 import { TierBadge } from '../components/TierBadge';
 import { DimensionBars } from '../components/DimensionBars';
+import { StructuredReportDisplay } from '../components/StructuredReportDisplay';
 import { TIER_CONFIG, type Flag, type Dimensions } from '../data/mockData';
 import { toast } from 'sonner';
 import { copyToClipboard } from '../utils/clipboard';
@@ -122,9 +123,8 @@ function FlagCard({ flag, type, expanded, onToggle }: {
 }
 
 export function PaperDetail() {
-  const { id: encodedDoi } = useParams<{ id: string }>();
-  const doi = encodedDoi ? decodeURIComponent(encodedDoi) : undefined;
   const [searchParams] = useSearchParams();
+  const doi = searchParams.get('doi') ?? undefined;
   const navigate = useNavigate();
   const fromLabel = ({
     results: 'Results',
@@ -182,21 +182,46 @@ export function PaperDetail() {
     );
   }
 
-  const radarData = (Object.keys(paper.per_dimension || {}) as string[]).map(key => ({
-    subject: key.charAt(0).toUpperCase() + key.slice(1),
-    value: (paper.per_dimension?.[key] || 0) * 100,
+  // Normalise per_dimension: /explain returns DimensionScore[] with scores 0.0–1.0
+  const pdRaw = paper.per_dimension;
+  const pdMap: Record<string, number> = {};
+  if (Array.isArray(pdRaw)) {
+    for (const d of pdRaw) {
+      // score is 0.0–1.0 from /explain; convert to 0–100
+      pdMap[d.dimension] = Math.round(d.score <= 1 ? d.score * 100 : d.score);
+    }
+  } else if (pdRaw && typeof pdRaw === 'object') {
+    for (const [k, v] of Object.entries(pdRaw as Record<string, number>)) {
+      pdMap[k] = Math.round((v as number) <= 1 ? (v as number) * 100 : (v as number));
+    }
+  }
+
+  // Human-readable short labels for radar axes (important for judges)
+  const RADAR_LABELS: Record<string, string> = {
+    retraction_watch:    'Retraction',
+    stats_integrity:     'Statistics',
+    statistical_integrity: 'Statistics',
+    citation_network:    'Citations',
+    methodology:         'Methodology',
+    publication_metadata:'Publication',
+    reproducibility:     'Repro.',
+  };
+
+  const radarData = Object.entries(pdMap).map(([key, val]) => ({
+    subject: RADAR_LABELS[key] ?? key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+    fullLabel: key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+    value: val,
     fullMark: 100,
   }));
 
-  // Map backend per_dimension keys → frontend Dimensions keys (0-1 → 0-100)
-  const pd = paper.per_dimension || {};
+  // Map exact backend key names → frontend Dimensions keys (default 0 so missing data is visible)
   const dimensions = {
-    retraction:      Math.round((pd['retraction_watch'] ?? pd['retraction'] ?? 1) * 100),
-    statistics:      Math.round((pd['stats_integrity']  ?? pd['statistics']  ?? 0.7) * 100),
-    reproducibility: Math.round((pd['reproducibility']                        ?? 0.7) * 100),
-    citations:       Math.round((pd['citation_network'] ?? pd['citations']   ?? 0.7) * 100),
-    methodology:     Math.round((pd['methodology']                            ?? 0.7) * 100),
-    venue:           Math.round((pd['publication_metadata'] ?? pd['venue']   ?? 0.7) * 100),
+    retraction:      pdMap['retraction_watch']    ?? 0,
+    statistics:      pdMap['stats_integrity']      ?? pdMap['statistical_integrity'] ?? 0,
+    reproducibility: pdMap['reproducibility']      ?? 0,
+    citations:       pdMap['citation_network']     ?? 0,
+    methodology:     pdMap['methodology']          ?? 0,
+    venue:           pdMap['publication_metadata'] ?? 0,
   };
 
   const toggleFlag = (code: string) =>
@@ -230,24 +255,29 @@ export function PaperDetail() {
   const cfg = TIER_CONFIG[tierLower as 'trusted' | 'caution' | 'untrusted'] || TIER_CONFIG['untrusted'];
 
   // Convert flag codes (strings) to Flag objects for display
-  const convertFlagsForDisplay = (flags: string[] | Flag[] | undefined): Flag[] => {
+  const convertFlagsForDisplay = (
+    flags: string[] | Flag[] | undefined,
+    signalType: 'hard' | 'soft' | 'quality' = 'soft'
+  ): Flag[] => {
     if (!flags) return [];
-    return flags.map((flag, idx) => {
+    return flags.map(flag => {
       if (typeof flag === 'string') {
         return {
           code: flag,
-          pts: -2,
-          explanation: `Flag: ${flag}`,
+          pts: signalType === 'quality' ? 2 : -2,
+          explanation: signalType === 'quality'
+            ? `Positive signal: ${flag.replace(/_/g, ' ').toLowerCase()}`
+            : `Flag: ${flag.replace(/_/g, ' ').toLowerCase()}`,
           evidence: 'See credibility report for details',
         };
       }
-      return flag;
+      return flag as Flag;
     });
   };
 
-  const hardFlags = convertFlagsForDisplay(paper.hard_flags as any);
-  const softFlags = convertFlagsForDisplay(paper.soft_flags as any);
-  const qualitySignals = convertFlagsForDisplay(paper.quality_signals as any);
+  const hardFlags    = convertFlagsForDisplay(paper.hard_flags as any,     'hard');
+  const softFlags    = convertFlagsForDisplay(paper.soft_flags as any,     'soft');
+  const qualitySignals = convertFlagsForDisplay(paper.quality_signals as any, 'quality');
 
   return (
     <Layout showBack>
@@ -342,7 +372,17 @@ export function PaperDetail() {
                   <TierBadge tier={tierLower as any} size="lg" />
                 </div>
                 <p style={{ fontSize: '15px', color: 'rgba(255,255,255,0.72)', lineHeight: 1.6, maxWidth: '440px', margin: '0 auto' }}>
-                  {paper.summary}
+                  {(() => {
+                    const s = paper.summary ?? '';
+                    const isGarbage = s.length > 400
+                      || s.includes('Must not use markdown')
+                      || s.includes('We must not')
+                      || s.includes('no asterisks')
+                      || s.includes('score_breakdown');
+                    return isGarbage
+                      ? (paper.structured_report?.overall_verdict ?? 'No summary available.')
+                      : (s || paper.structured_report?.overall_verdict || 'No summary available.');
+                  })()}
                 </p>
                 {hardFlags.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '14px', justifyContent: 'center' }}>
@@ -365,48 +405,120 @@ export function PaperDetail() {
 
           {/* ── Credibility Breakdown ── */}
           <SectionDivider title="Credibility Breakdown" />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}
-            className="grid-cols-1 md:grid-cols-2"
-          >
-            {/* Bars */}
-            <div style={{
-              padding: '20px', borderRadius: '14px',
-              background: 'rgba(255,255,255,0.025)',
-              border: '1px solid rgba(255,255,255,0.06)',
-            }}>
-              <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', marginBottom: '18px' }}>
-                Per-Dimension Scores
-              </p>
-              <DimensionBars dimensions={dimensions} />
-            </div>
 
-            {/* Radar chart */}
-            <div style={{
-              padding: '20px', borderRadius: '14px',
-              background: 'rgba(255,255,255,0.025)',
-              border: '1px solid rgba(255,255,255,0.06)',
-            }}>
-              <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', marginBottom: '8px' }}>
-                Radar Profile
-              </p>
-              <ResponsiveContainer width="100%" height={230}>
-                <RadarChart key={paper.id} data={radarData}>
-                  <PolarGrid stroke="rgba(255,255,255,0.07)" gridType="polygon" />
-                  <PolarAngleAxis
-                    dataKey="subject"
-                    tick={{ fill: 'rgba(255,255,255,0.38)', fontSize: 11 }}
-                  />
-                  <Radar
-                    dataKey="value"
-                    stroke={cfg.color}
-                    fill={cfg.color}
-                    fillOpacity={0.12}
-                    strokeWidth={2}
-                  />
-                </RadarChart>
-              </ResponsiveContainer>
+          {/* If structured_report available, render rich AI breakdown */}
+          {paper.structured_report ? (
+            <StructuredReportDisplay report={paper.structured_report as any} />
+          ) : (
+            /* Fallback: manual dimension bars + radar */
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              {/* Bars */}
+              <div style={{
+                padding: '20px', borderRadius: '14px',
+                background: 'rgba(255,255,255,0.025)',
+                border: '1px solid rgba(255,255,255,0.06)',
+              }}>
+                <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', marginBottom: '18px' }}>
+                  Per-Dimension Scores
+                </p>
+                <DimensionBars dimensions={dimensions} />
+              </div>
+
+              {/* Radar chart */}
+              {radarData.length > 0 && (
+                <div style={{
+                  padding: '20px', borderRadius: '14px',
+                  background: 'rgba(255,255,255,0.025)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                }}>
+                  <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', marginBottom: '8px' }}>
+                    Radar Profile
+                  </p>
+                  <ResponsiveContainer width="100%" height={230}>
+                    <RadarChart key={paper.doi ?? 'radar'} data={radarData}>
+                      <PolarGrid stroke="rgba(255,255,255,0.07)" gridType="polygon" />
+                      <PolarAngleAxis
+                        dataKey="subject"
+                        tick={{ fill: 'rgba(255,255,255,0.38)', fontSize: 11 }}
+                      />
+                      <Radar
+                        dataKey="value"
+                        stroke={cfg.color}
+                        fill={cfg.color}
+                        fillOpacity={0.12}
+                        strokeWidth={2}
+                      />
+                    </RadarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </div>
-          </div>
+          )}
+
+          {/* Always show radar + dimension bars when data is available */}
+          {Object.values(dimensions).some(v => v > 0) && (
+            <>
+              <SectionDivider title="Dimension Radar · Visual Credibility Profile" />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+
+                {/* Radar chart — meaningful for judges */}
+                <div style={{
+                  padding: '20px', borderRadius: '14px',
+                  background: 'rgba(255,255,255,0.025)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  position: 'relative', overflow: 'hidden',
+                }}>
+                  <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '2px', background: `linear-gradient(90deg, transparent, ${cfg.color}88, transparent)` }} />
+                  <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '4px' }}>
+                    Radar Profile
+                  </p>
+                  <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)', marginBottom: '12px' }}>
+                    Each axis = one credibility dimension (0–100). Larger area = more trustworthy.
+                  </p>
+                  <ResponsiveContainer width="100%" height={240}>
+                    <RadarChart key={paper.doi ?? 'radar'} data={radarData} margin={{ top: 10, right: 20, bottom: 10, left: 20 }}>
+                      <PolarGrid stroke="rgba(255,255,255,0.08)" gridType="polygon" />
+                      <PolarAngleAxis
+                        dataKey="subject"
+                        tick={{ fill: 'rgba(255,255,255,0.5)', fontSize: 10, fontFamily: "'Inter', sans-serif" }}
+                      />
+                      <Radar
+                        dataKey="value"
+                        stroke={cfg.color}
+                        fill={cfg.color}
+                        fillOpacity={0.15}
+                        strokeWidth={2}
+                        dot={{ fill: cfg.color, strokeWidth: 0, r: 3 }}
+                      />
+                    </RadarChart>
+                  </ResponsiveContainer>
+                  {/* Legend */}
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginTop: '8px', flexWrap: 'wrap' }}>
+                    {radarData.map(d => (
+                      <div key={d.subject} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: cfg.color, opacity: d.value >= 70 ? 1 : d.value >= 45 ? 0.7 : 0.4 }} />
+                        <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', fontFamily: "'JetBrains Mono', monospace" }}>
+                          {d.subject.split(' ').map(w => w[0]).join('')} {d.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Dimension bars */}
+                <div style={{
+                  padding: '20px', borderRadius: '14px',
+                  background: 'rgba(255,255,255,0.025)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                }}>
+                  <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '18px' }}>
+                    Per-Dimension Scores
+                  </p>
+                  <DimensionBars dimensions={dimensions} />
+                </div>
+              </div>
+            </>
+          )}
 
           {/* ── Hard Flags ── */}
           <SectionDivider title="Hard Flags · Critical Issues" />
