@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Tier, TIER_CONFIG } from '../data/mockData';
+import { TIER_CONFIG, type Tier } from '../data/mockData';
 
 interface ScoreRingProps {
   score: number;

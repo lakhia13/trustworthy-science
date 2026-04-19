@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { motion } from 'motion/react';
 import { Eye, Copy, ExternalLink } from 'lucide-react';
 import { useNavigate } from 'react-router';
-import { Paper, TIER_CONFIG } from '../data/mockData';
+import { TIER_CONFIG, type Paper } from '../data/mockData';
 import { TierBadge } from './TierBadge';
 import { toast } from 'sonner';
 import { copyToClipboard } from '../utils/clipboard';

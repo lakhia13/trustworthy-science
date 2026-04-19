@@ -14,7 +14,7 @@ import { Layout } from '../components/Layout';
 import { ScoreRing } from '../components/ScoreRing';
 import { TierBadge } from '../components/TierBadge';
 import { DimensionBars } from '../components/DimensionBars';
-import { TIER_CONFIG, Flag, Dimensions } from '../data/mockData';
+import { TIER_CONFIG, type Flag, type Dimensions } from '../data/mockData';
 import { toast } from 'sonner';
 import { copyToClipboard } from '../utils/clipboard';
 import { getSinglePaper, getUserErrorMessage, type Paper as ApiPaper } from '../../api/client';

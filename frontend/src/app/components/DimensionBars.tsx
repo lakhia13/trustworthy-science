@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'motion/react';
-import { Dimensions } from '../data/mockData';
+import type { Dimensions } from '../data/mockData';
 
 interface DimensionBarsProps {
   dimensions: Dimensions;

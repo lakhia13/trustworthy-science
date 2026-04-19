@@ -4,7 +4,7 @@ import { Search, Filter, Download, GitCompare, Loader2, Network } from 'lucide-r
 import { useNavigate, useLocation } from 'react-router';
 import { Layout } from '../components/Layout';
 import { PaperCard } from '../components/PaperCard';
-import { Tier } from '../data/mockData';
+import type { Tier } from '../data/mockData';
 import { toast } from 'sonner';
 import { filterForRAG, getUserErrorMessage, type Paper } from '../../api/client';
 

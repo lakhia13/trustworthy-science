@@ -1,5 +1,5 @@
 import { CheckCircle, AlertTriangle, XCircle } from 'lucide-react';
-import { Tier, TIER_CONFIG } from '../data/mockData';
+import { TIER_CONFIG, type Tier } from '../data/mockData';
 
 interface TierBadgeProps {
   tier: Tier;
