@@ -172,7 +172,10 @@ def _phase1_extract_concepts(user_prompt: str, config: dict | None) -> list[str]
         from langchain_core.messages import HumanMessage
         response = llm.invoke([HumanMessage(content=prompt)])
         raw = strip_think_tokens(response.content)
-        return _parse_json_array(raw)
+        concepts = _parse_json_array(raw)
+        if not concepts:
+            logger.info("[LIBRARIAN] Phase 1 extracted no concepts; this may indicate LLM output issues or unusual prompts")
+        return concepts
     except Exception as exc:
         logger.warning("[LIBRARIAN] Phase 1 LLM call failed: %s", exc)
         return []
@@ -221,11 +224,20 @@ def _parse_json_array(raw: str) -> list[str]:
         logger.warning("[LIBRARIAN] Could not find JSON array in response: %s", raw[:200])
         return []
     try:
-        items = json.loads(match.group())
+        json_str = match.group()
+        items = json.loads(json_str)
         if isinstance(items, list):
             return [str(item).strip() for item in items if item and str(item).strip()]
     except (json.JSONDecodeError, TypeError) as exc:
         logger.warning("[LIBRARIAN] JSON parse failed: %s | raw: %s", exc, raw[:200])
+        # Try to recover by extracting text within quotes
+        try:
+            quote_matches = re.findall(r'"([^"]+)"', raw)
+            if quote_matches:
+                logger.info("[LIBRARIAN] Recovered %d items from quoted text", len(quote_matches))
+                return quote_matches
+        except Exception as recovery_exc:
+            logger.debug("[LIBRARIAN] Recovery attempt failed: %s", recovery_exc)
     return []
 
 

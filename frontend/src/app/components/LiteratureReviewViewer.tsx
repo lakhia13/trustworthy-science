@@ -5,10 +5,8 @@
 
 import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Copy, Download, BookOpen, X, ExternalLink, Clock, AlignLeft } from 'lucide-react';
-import { toast } from 'sonner';
+import { X } from 'lucide-react';
 import { TierBadge } from './TierBadge';
-import { useNavigate } from 'react-router';
 import type { Paper } from '../../api/client';
 
 interface LiteratureReviewViewerProps {
@@ -23,7 +21,6 @@ interface CitationPopoverProps {
 }
 
 function CitationPopover({ paper, index, onClose }: CitationPopoverProps) {
-  const navigate = useNavigate();
   const score = paper.score ?? paper.composite_score ?? 0;
   const scoreColor = score >= 70 ? '#00e676' : score >= 45 ? '#ffd166' : '#ff4757';
 
@@ -35,16 +32,18 @@ function CitationPopover({ paper, index, onClose }: CitationPopoverProps) {
       transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
       style={{
         position: 'fixed',
-        bottom: '24px', right: '24px',
-        width: '340px',
+        bottom: '32px',
+        right: '32px',
+        width: '360px',
+        maxHeight: '85vh',
         zIndex: 200,
         borderRadius: '16px',
-        background: 'rgba(10,12,28,0.97)',
+        background: 'rgba(10,12,28,0.98)',
         border: '1px solid rgba(124,58,237,0.35)',
         boxShadow: '0 24px 64px rgba(0,0,0,0.6), 0 0 32px rgba(124,58,237,0.1)',
         backdropFilter: 'blur(24px)',
         padding: '18px',
-        overflow: 'hidden',
+        overflow: 'auto',
       }}
     >
       {/* Accent line */}
@@ -91,24 +90,40 @@ function CitationPopover({ paper, index, onClose }: CitationPopoverProps) {
         }}>
           {score}<span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', fontWeight: 400 }}>/100</span>
         </span>
-        <TierBadge tier={paper.tier} size="sm" />
+        <TierBadge tier={paper.tier as any} size="sm" />
       </div>
 
-      <div style={{ display: 'flex', gap: '8px' }}>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
         {paper.doi && (
-          <button
-            onClick={() => { onClose(); navigate(`/paper?doi=${encodeURIComponent(paper.doi!)}&from=review`); }}
-            style={{
-              flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
-              padding: '7px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 500,
-              background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.35)',
-              color: '#a78bfa', cursor: 'pointer', transition: 'all 0.15s',
-            }}
-            onMouseEnter={e => (e.currentTarget.style.background = 'rgba(124,58,237,0.25)')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'rgba(124,58,237,0.15)')}
-          >
-            View Paper
-          </button>
+          <>
+            {/* <button
+              onClick={() => { onClose(); navigate(`/paper?doi=${encodeURIComponent(paper.doi!)}&from=review`); }}
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
+                padding: '7px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 500,
+                background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.35)',
+                color: '#a78bfa', cursor: 'pointer', transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(124,58,237,0.25)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'rgba(124,58,237,0.15)')}
+            >
+              View Paper
+            </button> */}
+            <button
+              onClick={() => { onClose(); window.open(`/paper?doi=${encodeURIComponent(paper.doi!)}&from=review`, '_blank'); }}
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
+                padding: '7px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 500,
+                background: 'rgba(6,182,212,0.15)', border: '1px solid rgba(6,182,212,0.35)',
+                color: '#06b6d4', cursor: 'pointer', transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(6,182,212,0.25)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'rgba(6,182,212,0.15)')}
+              title="Open in new tab"
+            >
+              View Paper
+            </button>
+          </>
         )}
         {paper.doi && (
           <a
@@ -130,7 +145,7 @@ function CitationPopover({ paper, index, onClose }: CitationPopoverProps) {
               (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)';
             }}
           >
-            <ExternalLink size={13} />
+            DOI
           </a>
         )}
       </div>
@@ -157,90 +172,10 @@ export function LiteratureReviewViewer({ reviewText, citedPapers }: LiteratureRe
   const [activeRef, setActiveRef] = useState<number | null>(null);
   const activePaper = activeRef != null ? citedPapers[activeRef - 1] : null;
 
-  const wordCount = useMemo(() => reviewText.trim().split(/\s+/).length, [reviewText]);
-  const readingMins = Math.max(1, Math.ceil(wordCount / 200));
   const segments = useMemo(() => parseReviewText(reviewText), [reviewText]);
-
-  const copyReview = () => {
-    navigator.clipboard.writeText(reviewText).then(() => toast.success('Review copied to clipboard'));
-  };
 
   return (
     <div style={{ position: 'relative' }}>
-      {/* Toolbar */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        marginBottom: '16px', flexWrap: 'wrap', gap: '10px',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <AlignLeft size={13} color="rgba(255,255,255,0.3)" />
-            <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.35)' }}>
-              {wordCount.toLocaleString()} words
-            </span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <Clock size={13} color="rgba(255,255,255,0.3)" />
-            <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.35)' }}>
-              ~{readingMins} min read
-            </span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <BookOpen size={13} color="rgba(255,255,255,0.3)" />
-            <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.35)' }}>
-              {citedPapers.length} sources
-            </span>
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <button
-            onClick={copyReview}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '5px',
-              padding: '6px 12px', borderRadius: '8px',
-              fontSize: '12px', fontWeight: 500,
-              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)',
-              color: 'rgba(255,255,255,0.45)', cursor: 'pointer', transition: 'all 0.15s',
-            }}
-            onMouseEnter={e => {
-              (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.08)';
-              (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.75)';
-            }}
-            onMouseLeave={e => {
-              (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)';
-              (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.45)';
-            }}
-          >
-            <Copy size={12} /> Copy
-          </button>
-          <button
-            onClick={() => {
-              const blob = new Blob([reviewText], { type: 'text/plain' });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url; a.download = 'literature-review.txt'; a.click();
-              URL.revokeObjectURL(url);
-            }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '5px',
-              padding: '6px 12px', borderRadius: '8px',
-              fontSize: '12px', fontWeight: 500,
-              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)',
-              color: 'rgba(255,255,255,0.45)', cursor: 'pointer', transition: 'all 0.15s',
-            }}
-            onMouseEnter={e => {
-              (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.08)';
-              (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.75)';
-            }}
-            onMouseLeave={e => {
-              (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)';
-              (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,0.45)';
-            }}
-          >
-            <Download size={12} /> Export
-          </button>
-        </div>
-      </div>
 
       {/* Review body */}
       <div style={{
@@ -280,64 +215,7 @@ export function LiteratureReviewViewer({ reviewText, citedPapers }: LiteratureRe
         )}
       </div>
 
-      {/* Cited papers list */}
-      {citedPapers.length > 0 && (
-        <div style={{ marginTop: '20px' }}>
-          <p style={{
-            fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
-            color: 'rgba(255,255,255,0.25)', marginBottom: '10px',
-          }}>
-            {citedPapers.length} References
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            {citedPapers.map((p, i) => {
-              const score = p.score ?? p.composite_score ?? 0;
-              const scoreColor = score >= 70 ? '#00e676' : score >= 45 ? '#ffd166' : '#ff4757';
-              return (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.25, delay: i * 0.04 }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '12px',
-                    padding: '10px 14px', borderRadius: '10px',
-                    background: activeRef === i + 1 ? 'rgba(124,58,237,0.08)' : 'rgba(255,255,255,0.02)',
-                    border: `1px solid ${activeRef === i + 1 ? 'rgba(124,58,237,0.25)' : 'rgba(255,255,255,0.05)'}`,
-                    cursor: 'pointer', transition: 'all 0.15s',
-                  }}
-                  onClick={() => setActiveRef(activeRef === i + 1 ? null : i + 1)}
-                >
-                  <span style={{
-                    fontFamily: "'JetBrains Mono', monospace",
-                    fontSize: '11px', color: 'rgba(255,255,255,0.2)', minWidth: '24px',
-                  }}>
-                    [{i + 1}]
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{
-                      fontSize: '12px', color: 'rgba(255,255,255,0.75)',
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0,
-                    }}>
-                      {p.title}
-                    </p>
-                    <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.28)', margin: 0, fontStyle: 'italic' }}>
-                      {p.venue}{p.year ? `, ${p.year}` : ''}
-                    </p>
-                  </div>
-                  <span style={{
-                    fontFamily: "'JetBrains Mono', monospace",
-                    fontSize: '12px', fontWeight: 700, color: scoreColor, flexShrink: 0,
-                  }}>
-                    {score}
-                  </span>
-                  <TierBadge tier={p.tier} size="sm" />
-                </motion.div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+
 
       {/* Citation popover */}
       <AnimatePresence>

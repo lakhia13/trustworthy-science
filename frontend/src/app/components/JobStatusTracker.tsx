@@ -16,10 +16,10 @@ interface JobStatusTrackerProps {
 }
 
 const STEP_ICONS = [
-  { icon: Zap,        label: 'Generating search queries',   key: 'generated_queries' },
-  { icon: FileSearch, label: 'Retrieving papers',            key: 'query_metadata' },
-  { icon: Database,   label: 'Scoring & filtering papers',   key: 'accepted_papers' },
-  { icon: BookOpen,   label: 'Synthesising literature review', key: 'literature_review' },
+  { icon: Zap, label: 'Generating search queries', key: 'generated_queries' },
+  { icon: FileSearch, label: 'Retrieving papers', key: 'query_metadata' },
+  { icon: Database, label: 'Scoring & filtering papers', key: 'accepted_papers' },
+  { icon: BookOpen, label: 'Synthesising literature review', key: 'literature_review' },
 ];
 
 function getStepIndex(status: DeepResearchJobStatus): number {
@@ -49,9 +49,13 @@ export function JobStatusTracker({ jobId, onComplete, onError }: JobStatusTracke
   useEffect(() => {
     let backoff = 5000;
 
+    let stopped = false;
+
     const poll = async () => {
+      if (stopped) return;
       try {
         const data = await getDeepResearchStatus(jobId);
+        if (stopped) return; // component may have unmounted while awaiting
         setStatus(data);
 
         // Build log messages from progress
@@ -65,18 +69,18 @@ export function JobStatusTracker({ jobId, onComplete, onError }: JobStatusTracke
             next.push(`✓ ${data.scored_papers?.length ?? '?'} candidate papers retrieved`);
           if (data.accepted_papers?.length && !prev.some(l => l.includes('accepted')))
             next.push(`✓ ${data.accepted_papers.length} papers accepted (tier ≥ threshold)`);
-          if (data.literature_review && !prev.some(l => l.includes('review generated')))
-            next.push(`✓ Literature review generated (${data.literature_review.split(' ').length} words)`);
           return next;
         });
 
         if (data.status === 'completed') {
+          stopped = true;
           if (intervalRef.current) clearInterval(intervalRef.current);
           if (timerRef.current) clearInterval(timerRef.current);
           onComplete(data);
           return;
         }
         if (data.status === 'failed') {
+          stopped = true;
           if (intervalRef.current) clearInterval(intervalRef.current);
           if (timerRef.current) clearInterval(timerRef.current);
           onError(data.message || 'Job failed. Please try again.');
@@ -92,9 +96,14 @@ export function JobStatusTracker({ jobId, onComplete, onError }: JobStatusTracke
       }
     };
 
-    poll(); // Immediate first poll
+    // Set interval ref BEFORE the immediate poll so clearInterval inside poll
+    // always has a valid reference to cancel (avoids stale-interval race condition).
     intervalRef.current = setInterval(poll, backoff);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+    poll(); // Immediate first poll
+    return () => {
+      stopped = true;
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
   }, [jobId]);
 
   // Auto-scroll logs

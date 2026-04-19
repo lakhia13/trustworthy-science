@@ -21,7 +21,6 @@ import {
 import { toast } from 'sonner';
 import { Layout } from '../components/Layout';
 import { JobStatusTracker } from '../components/JobStatusTracker';
-import { LiteratureReviewViewer } from '../components/LiteratureReviewViewer';
 import { ScoringWeightCustomizer } from '../components/ScoringWeightCustomizer';
 import { TierBadge } from '../components/TierBadge';
 import {
@@ -30,6 +29,7 @@ import {
   type DeepResearchJobStatus,
   type Paper,
 } from '../../api/client';
+import { type Tier } from '../data/mockData';
 
 // ─── Tier colors ─────────────────────────────────────────────────────────────
 
@@ -46,10 +46,17 @@ function MiniPaperRow({ paper }: { paper: Paper }) {
   const tierColor = TIER_COLOR[paper.tier] ?? 'rgba(255,255,255,0.35)';
   const displayScore = paper.composite_score ?? paper.score;
 
+  const handleClick = () => {
+    if (paper.doi) {
+      window.open(`/paper?doi=${encodeURIComponent(paper.doi)}&from=results`, '_blank');
+    }
+  };
+
   return (
     <div
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      onClick={handleClick}
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -58,8 +65,10 @@ function MiniPaperRow({ paper }: { paper: Paper }) {
         borderRadius: '9px',
         background: hovered ? 'rgba(124,58,237,0.08)' : 'rgba(255,255,255,0.025)',
         border: `1px solid ${hovered ? 'rgba(124,58,237,0.22)' : 'rgba(255,255,255,0.06)'}`,
-        cursor: 'default',
+        cursor: 'pointer',
         transition: 'background 0.15s, border-color 0.15s',
+        minWidth: 0,
+        overflow: 'hidden',
       }}
     >
       {/* Score chip */}
@@ -88,14 +97,17 @@ function MiniPaperRow({ paper }: { paper: Paper }) {
         {paper.title ?? paper.doi ?? 'Unknown paper'}
       </span>
 
-      {/* Venue · year */}
+      {/* Venue · year — hidden on very small screens to avoid overflow */}
       {(paper.venue || paper.year) && (
-        <span style={{
+        <span className="dr-paper-meta" style={{
           flexShrink: 0,
           fontSize: '10px',
           color: 'rgba(255,255,255,0.25)',
           fontFamily: "'JetBrains Mono', monospace",
           whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          maxWidth: '140px',
         }}>
           {[paper.venue, paper.year].filter(Boolean).join(' · ')}
         </span>
@@ -104,7 +116,7 @@ function MiniPaperRow({ paper }: { paper: Paper }) {
       {/* Tier badge */}
       {paper.tier && (
         <span style={{ flexShrink: 0 }}>
-          <TierBadge tier={paper.tier} />
+          <TierBadge tier={paper.tier.toLowerCase() as Tier} />
         </span>
       )}
     </div>
@@ -230,7 +242,7 @@ export function DeepResearch() {
         zIndex: 0,
       }} />
 
-      <div style={{ maxWidth: '1320px', margin: '0 auto', padding: '32px 24px 100px', position: 'relative', zIndex: 10 }}>
+      <div style={{ maxWidth: '1320px', margin: '0 auto', padding: '32px 24px 100px', position: 'relative', zIndex: 10 }} className="deep-research-container">
 
         {/* ── Page header ────────────────────────────────────────────────── */}
         <motion.div
@@ -287,7 +299,7 @@ export function DeepResearch() {
           gridTemplateColumns: 'minmax(300px, 380px) 1fr',
           gap: '20px',
           alignItems: 'start',
-        }}>
+        }} className="deep-research-grid">
 
           {/* ═══════════════════════════════════ LEFT: Config panel ═════════ */}
           <motion.div
@@ -495,18 +507,18 @@ export function DeepResearch() {
             >
               {isSubmitting
                 ? <>
-                    <span style={{
-                      width: '14px', height: '14px',
-                      border: '2px solid rgba(255,255,255,0.3)',
-                      borderTopColor: 'white',
-                      borderRadius: '50%',
-                      animation: 'spin 0.7s linear infinite',
-                      display: 'inline-block',
-                    }} />
-                    Starting research…
-                  </>
+                  <span style={{
+                    width: '14px', height: '14px',
+                    border: '2px solid rgba(255,255,255,0.3)',
+                    borderTopColor: 'white',
+                    borderRadius: '50%',
+                    animation: 'spin 0.7s linear infinite',
+                    display: 'inline-block',
+                  }} />
+                  Starting research…
+                </>
                 : isRunning
-                ? <>
+                  ? <>
                     <span style={{
                       width: '14px', height: '14px',
                       border: '2px solid rgba(255,255,255,0.3)',
@@ -517,7 +529,7 @@ export function DeepResearch() {
                     }} />
                     Research in progress…
                   </>
-                : <><Sparkles size={15} /> Run Deep Research</>
+                  : <><Sparkles size={15} /> Run Deep Research</>
               }
             </button>
 
@@ -552,7 +564,7 @@ export function DeepResearch() {
             initial={{ opacity: 0, x: 16 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.4, delay: 0.12 }}
-            style={{ display: 'flex', flexDirection: 'column', gap: '16px', minHeight: '400px' }}
+            style={{ display: 'flex', flexDirection: 'column', gap: '16px', minHeight: '400px', minWidth: 0 }}
           >
 
             {/* Job status tracker while running */}
@@ -644,11 +656,11 @@ export function DeepResearch() {
                     background: 'rgba(124,58,237,0.04)',
                   }}>
                     <GradientRule />
-                    <div style={{ padding: '16px 18px', display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
+                    <div className="dr-stats-bar" style={{ padding: '16px 18px', alignItems: 'center' }}>
                       {[
-                        { label: 'Accepted',  value: papers.length, color: '#a78bfa' },
-                        { label: 'Trusted',   value: papers.filter((p: Paper) => p.tier === 'Trusted').length, color: '#00e676' },
-                        { label: 'Caution',   value: papers.filter((p: Paper) => p.tier === 'Caution').length, color: '#ffd166' },
+                        { label: 'Accepted', value: papers.length, color: '#a78bfa' },
+                        { label: 'Trusted', value: papers.filter((p: Paper) => p.tier === 'Trusted').length, color: '#00e676' },
+                        { label: 'Caution', value: papers.filter((p: Paper) => p.tier === 'Caution').length, color: '#ffd166' },
                         { label: 'Queries', value: generatedQueries.length, color: '#06b6d4' },
                         { label: 'MeSH terms', value: meshTerms.length, color: 'rgba(255,255,255,0.4)' },
                       ].map(s => (
@@ -751,14 +763,6 @@ export function DeepResearch() {
                     </div>
                   )}
 
-                  {/* ── Literature Review Viewer ── */}
-                  {result?.literature_review && (
-                    <LiteratureReviewViewer
-                      reviewText={result.literature_review}
-                      citedPapers={result.cited_papers ?? []}
-                    />
-                  )}
-
                   {/* Reset / new research button */}
                   <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '4px' }}>
                     <button
@@ -816,6 +820,51 @@ export function DeepResearch() {
           />
         )}
       </AnimatePresence>
+
+      {/* Responsive styles */}
+      <style>{`
+        @media (max-width: 1024px) {
+          .deep-research-container {
+            padding: 24px 16px 100px !important;
+          }
+          .deep-research-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+
+        @media (max-width: 768px) {
+          .deep-research-container {
+            padding: 16px 12px 100px !important;
+          }
+          .deep-research-grid {
+            grid-template-columns: 1fr !important;
+            gap: 16px !important;
+          }
+        }
+
+        @media (max-width: 640px) {
+          .deep-research-container {
+            padding: 12px 10px 110px !important;
+          }
+          /* Hide venue/year meta on very small screens */
+          .dr-paper-meta {
+            display: none !important;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .deep-research-container {
+            padding: 8px 8px 120px !important;
+          }
+        }
+
+        /* Prevent the summary stats bar from overflowing */
+        .dr-stats-bar {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+      `}</style>
     </Layout>
   );
 }

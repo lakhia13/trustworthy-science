@@ -167,15 +167,19 @@ export function Layout({ children, showBack }: LayoutProps) {
         {children}
       </main>
 
-      {/* Mobile bottom nav */}
+      {/* Mobile bottom nav — visible only on tablet/mobile (≤ 1024px) */}
+      <style>{`
+        .ts-bottom-nav { display: flex !important; }
+        @media (min-width: 1025px) { .ts-bottom-nav { display: none !important; } }
+      `}</style>
       <nav
-        className="md:hidden"
+        className="ts-bottom-nav"
         style={{
           position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50,
           background: 'rgba(6,8,15,0.96)',
           borderTop: '1px solid rgba(255,255,255,0.07)',
           backdropFilter: 'blur(20px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-around',
+          alignItems: 'center', justifyContent: 'space-around',
           height: '60px',
         }}
       >

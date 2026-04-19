@@ -3,6 +3,7 @@ import { Landing } from './pages/Landing';
 import { DOISearch } from './pages/DOISearch';
 import { PaperDetail } from './pages/PaperDetail';
 import { DeepResearch } from './pages/DeepResearch';
+import { PaperReview } from './pages/PaperReview';
 import { Settings } from './pages/Settings';
 
 function NotFound() {
@@ -36,10 +37,11 @@ function NotFound() {
 }
 
 export const router = createBrowserRouter([
-  { path: '/',              Component: Landing },
-  { path: '/doi',           Component: DOISearch },
-  { path: '/paper',          Component: PaperDetail },
+  { path: '/', Component: Landing },
+  { path: '/doi', Component: DOISearch },
+  { path: '/paper', Component: PaperDetail },
+  { path: '/paper-review', Component: PaperReview },
   { path: '/deep-research', Component: DeepResearch },
-  { path: '/settings',      Component: Settings },
-  { path: '*',              Component: NotFound },
+  { path: '/settings', Component: Settings },
+  { path: '*', Component: NotFound },
 ]);

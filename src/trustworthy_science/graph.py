@@ -258,7 +258,9 @@ def _make_deep_research_graph(config: dict | None = None):
         """Fetch papers for every generated query and return deduplicated stubs."""
         stubs: list[PaperStub] = []
         seen: set[str] = set()
-        per_query = max(3, max_papers // max(len(state.generated_queries), 1))
+        # Use the user-requested top_k (capped by the config max) to control fetch size
+        max_to_fetch = min(state.top_k, max_papers) if state.top_k else max_papers
+        per_query = max(3, max_to_fetch // max(len(state.generated_queries), 1))
 
         query_metadata: list[dict] = []
         for query in state.generated_queries:
@@ -277,7 +279,7 @@ def _make_deep_research_graph(config: dict | None = None):
                 query_metadata.append({"query": query, "pmid_count": 0})
 
         # Hard cap to prevent runaway
-        stubs = stubs[:max_papers]
+        stubs = stubs[:max_to_fetch]
         logger.info("[DEEP_RESEARCH] Fetched %d unique stubs from %d queries",
                     len(stubs), len(state.generated_queries))
         return {"candidate_stubs": stubs, "query_metadata": query_metadata}

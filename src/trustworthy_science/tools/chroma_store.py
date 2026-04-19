@@ -190,13 +190,14 @@ def query_collection(
     """
     try:
         collection = get_or_create_collection(collection_name, config)
-        if collection.count() == 0:
-            logger.warning("[CHROMA] Collection '%s' is empty", collection_name)
+        collection_count = collection.count()
+        if collection_count == 0:
+            logger.info("[CHROMA] Collection '%s' is empty; returning no results (this is normal for new collections)", collection_name)
             return []
 
         results = collection.query(
             query_texts=[query],
-            n_results=min(k, collection.count()),
+            n_results=min(k, collection_count),
             include=["documents", "metadatas", "distances"],
         )
     except Exception as exc:

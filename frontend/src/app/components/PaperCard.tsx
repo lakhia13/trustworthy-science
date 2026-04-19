@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'motion/react';
 import { Eye, Copy, ExternalLink } from 'lucide-react';
-import { useNavigate } from 'react-router';
 import { TIER_CONFIG, type Paper } from '../data/mockData';
 import { TierBadge } from './TierBadge';
 import { toast } from 'sonner';
@@ -17,7 +16,6 @@ interface PaperCardProps {
 
 export function PaperCard({ paper, index, selected, onSelect, showCheckbox }: PaperCardProps) {
   const [hovered, setHovered] = useState(false);
-  const navigate = useNavigate();
   const cfg = TIER_CONFIG[(paper.tier.toLowerCase() as keyof typeof TIER_CONFIG)] ?? TIER_CONFIG['caution'];
 
   const stopAndCopy = (e: React.MouseEvent) => {
@@ -34,7 +32,7 @@ export function PaperCard({ paper, index, selected, onSelect, showCheckbox }: Pa
       transition={{ duration: 0.32, delay: (index ?? 0) * 0.06, ease: [0.16, 1, 0.3, 1] }}
       onHoverStart={() => setHovered(true)}
       onHoverEnd={() => setHovered(false)}
-      onClick={() => navigate(`/paper?doi=${encodeURIComponent(paper.doi || paper.id)}&from=results`)}
+      onClick={() => window.open(`/paper?doi=${encodeURIComponent(paper.doi || paper.id)}&from=results`, '_blank')}
       style={{
         position: 'relative',
         padding: '20px',
@@ -172,7 +170,7 @@ export function PaperCard({ paper, index, selected, onSelect, showCheckbox }: Pa
       {/* Actions */}
       <div style={{ display: 'flex', gap: '8px' }} onClick={e => e.stopPropagation()}>
         <button
-          onClick={() => navigate(`/paper?doi=${encodeURIComponent(paper.doi || paper.id)}&from=results`)}
+          onClick={() => window.open(`/paper?doi=${encodeURIComponent(paper.doi || paper.id)}&from=results`, '_blank')}
           style={{
             display: 'flex', alignItems: 'center', gap: '5px',
             padding: '6px 12px', borderRadius: '8px',

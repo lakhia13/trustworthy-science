@@ -205,7 +205,7 @@ class TruthFilter:
 
         state = DeepResearchState(
             user_prompt=prompt,
-            top_k=min(top_k, 30),
+            top_k=min(top_k, 50),
             min_tier=min_tier,
             collection_name=collection_name or "",
         )
