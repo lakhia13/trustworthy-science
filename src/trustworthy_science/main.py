@@ -54,10 +54,8 @@ app.add_middleware(
         "http://127.0.0.1:5174",
         "http://127.0.0.1:5175",
         "http://127.0.0.1:3000",
-        # Production — DigitalOcean Droplet (replace with actual IP/domain)
-        # "http://YOUR_DROPLET_IP",
-        # "https://yourdomain.com",
-        # "https://www.yourdomain.com",
+        # Production — DigitalOcean Droplet
+        "http://161.35.111.140",
     ],
     allow_credentials=True,
     allow_methods=["*"],
