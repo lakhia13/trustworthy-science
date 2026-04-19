@@ -426,12 +426,10 @@ Tests are fully mocked (no live API calls). `pytest-asyncio` is used for async a
 
 ---
 
-## Extending
+## What's Next?
 
-**Add a new check**: emit a `Flag` object from an agent, add its penalty/bonus to `config/scoring.yaml`.
+**Visual Analysis**: Implement multi-modal agents to analyze figures and charts for signs of image manipulation.
 
-**Add a new agent**: implement `(state: PaperState) → dict`, register as a node in `graph.py`, wire into edges.
+**Granular Stats**: Add deep-dive statistical agents to perform GRIM (Granularity-Related Inconsistency Check) tests on reported means and SDs.
 
-**Tune scoring**: edit `config/scoring.yaml` only — no code changes required.
-
-**Add a new API route**: create a router in `src/trustworthy_science/server/routes/`, register it in `server/app.py`.
+**Broadened Scope**: Expand beyond biomedical research into social sciences and engineering by integrating ArXiv and SSRN.
