@@ -30,11 +30,12 @@ def _make_paper_graph(config: dict | None = None):
     from trustworthy_science.agents.fetch_parse import fetch_and_parse
     from trustworthy_science.agents.retraction_watch import retraction_watch_agent
     from trustworthy_science.agents.paper_classifier import classify_paper_type
-    from trustworthy_science.agents.stats_integrity import stats_integrity_agent
-    from trustworthy_science.agents.reproducibility import reproducibility_agent
+    from trustworthy_science.agents.detective import detective_agent
+    from trustworthy_science.agents.coder import coder_agent
     from trustworthy_science.agents.citation_network import citation_network_agent
     from trustworthy_science.agents.methodology import methodology_agent
-    from trustworthy_science.agents.publication_metadata import publication_metadata_agent
+    from trustworthy_science.agents.librarian import librarian_agent
+    from trustworthy_science.agents.peer import peer_agent
     from trustworthy_science.agents.scoring import scoring_agent
 
     cfg = config or {}
@@ -49,11 +50,11 @@ def _make_paper_graph(config: dict | None = None):
     def classifier_node(state: PaperState):
         return classify_paper_type(state, config=cfg)
 
-    def stats_node(state: PaperState):
-        return stats_integrity_agent(state, config=cfg)
+    def detective_node(state: PaperState):
+        return detective_agent(state, config=cfg)
 
-    def repro_node(state: PaperState):
-        return reproducibility_agent(state, config=cfg)
+    def coder_node(state: PaperState):
+        return coder_agent(state, config=cfg)
 
     def citation_node(state: PaperState):
         return citation_network_agent(state, config=cfg)
@@ -61,8 +62,11 @@ def _make_paper_graph(config: dict | None = None):
     def methods_node(state: PaperState):
         return methodology_agent(state, config=cfg)
 
-    def venue_node(state: PaperState):
-        return publication_metadata_agent(state, config=cfg)
+    def librarian_node(state: PaperState):
+        return librarian_agent(state, config=cfg)
+
+    def peer_node(state: PaperState):
+        return peer_agent(state, config=cfg)
 
     def score_node(state: PaperState):
         return scoring_agent(state, config=cfg)
@@ -78,11 +82,12 @@ def _make_paper_graph(config: dict | None = None):
     builder.add_node("fetch_parse", fetch_node)
     builder.add_node("retraction_watch", retraction_node)
     builder.add_node("paper_classifier", classifier_node)
-    builder.add_node("stats_integrity", stats_node)
-    builder.add_node("reproducibility", repro_node)
+    builder.add_node("detective", detective_node)
+    builder.add_node("coder", coder_node)
     builder.add_node("citation_network", citation_node)
     builder.add_node("methodology", methods_node)
-    builder.add_node("publication_metadata", venue_node)
+    builder.add_node("librarian", librarian_node)
+    builder.add_node("peer", peer_node)
     builder.add_node("scoring", score_node)
 
     builder.add_edge(START, "fetch_parse")
@@ -97,11 +102,11 @@ def _make_paper_graph(config: dict | None = None):
             "paper_classifier": "paper_classifier",
         },
     )
-    builder.add_edge("paper_classifier", "stats_integrity")
+    builder.add_edge("paper_classifier", "detective")
 
-    # Parallel credibility agents all feed into scoring
-    for parallel_node in ("reproducibility", "citation_network", "methodology", "publication_metadata"):
-        builder.add_edge("stats_integrity", parallel_node)
+    # Five parallel credibility agents fan-out from detective → all feed into scoring
+    for parallel_node in ("coder", "citation_network", "methodology", "librarian", "peer"):
+        builder.add_edge("detective", parallel_node)
         builder.add_edge(parallel_node, "scoring")
 
     builder.add_edge("scoring", END)

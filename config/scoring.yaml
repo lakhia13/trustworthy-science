@@ -2,9 +2,10 @@
 # All weights are adjustable; reload at runtime with TruthFilter.reload_config()
 
 scoring:
-  base: 70
+  base: 70          # backward-compat alias
+  base_score: 70    # canonical key (read first in rules.py)
   methods_nudge_weight: 0.15   # how much the LLM methods score nudges the composite
-  quality_bonus_cap: 20        # max total bonus from quality signals
+  quality_bonus_cap: 25        # max total bonus from quality signals (raised from 20)
 
 hard_flags:
   # Any of these immediately cap composite_score <= 25 and set tier=Untrusted
@@ -12,6 +13,8 @@ hard_flags:
   - P_HACKING_CLUSTER
   - PREDATORY_VENUE
   - OUTCOME_SWITCHING_CONFIRMED
+  - OUTCOME_SWITCHING          # alias without _CONFIRMED suffix
+  - DATA_FABRICATION_SIGNS     # composite: BENFORDS_LAW_ANOMALY + INTERNAL_INCONSISTENCY
   - IMAGE_MANIPULATION          # post-MVP
 
 soft_flags:
@@ -30,16 +33,25 @@ soft_flags:
   VENUE_NOT_IN_DOAJ:             {penalty: 2}   # was 3 (in rules.py default)
   BENFORDS_LAW_ANOMALY:          {penalty: 6}   # leading-digit distribution anomaly (data fabrication signal)
   REPLICATION_FAILED:            {penalty: 8}   # known failed replication in SSRP / OSC database
+  INTERNAL_INCONSISTENCY:        {penalty: 8}   # numeric mismatch between abstract and results
+  CLAIM_OVERREACH:               {penalty: 7}   # conclusions not supported by statistics
+  DATA_LINK_BROKEN:              {penalty: 10}  # data/code URL returns 404 or is inaccessible
+  INDUSTRY_COI_UNSTATED:         {penalty: 6}   # industry funding without explicit COI statement
 
 quality_signals:
   # Each adds `bonus` points (capped at quality_bonus_cap total)
   PREREGISTERED:              {bonus: 6}
-  OPEN_DATA:                  {bonus: 6}
-  OPEN_CODE:                  {bonus: 4}
+  OPEN_DATA:                  {bonus: 6}    # alias — kept for backward compat
+  OPEN_DATA_PERMANENT:        {bonus: 8}    # DOI-backed permanent repository (Zenodo, Dryad, Figshare, etc.)
+  OPEN_DATA_GENERIC:          {bonus: 4}    # data available but not DOI-backed
+  OPEN_CODE:                  {bonus: 4}    # alias — kept for backward compat
+  OPEN_CODE_FUNCTIONAL:       {bonus: 6}    # code repo verified as functional and recently maintained
   INDEPENDENTLY_REPLICATED:   {bonus: 10}
   DIVERSE_CITATIONS:          {bonus: 4}
   COI_DISCLOSED:              {bonus: 2}
   HIGH_IMPACT_VENUE:          {bonus: 3}
+  SUPPORTING_CITATIONS:       {bonus: 5}    # scite.ai: majority of citations are supporting
+  DEEP_LIMITATIONS:           {bonus: 3}    # paper has a thorough self-critical limitations section
 
 tiers:
   trusted_min: 70
@@ -56,14 +68,15 @@ pcurve:
 paper_type_applicability:
   # Controls which reproducibility criteria are checked per paper type.
   # Criteria absent or set to false are silently skipped (no penalty, no bonus).
-  empirical_quantitative:   {data: true,  code: true,  prereg: true}
-  clinical_trial:           {data: true,  code: false, prereg: true}
-  systematic_review_meta:   {data: true,  code: false, prereg: false}  # reviews rarely need code
-  review_narrative:         {data: false, code: false, prereg: false}  # no penalties for reviews
-  theoretical:              {data: false, code: false, prereg: false}  # no penalties for theory
-  computational_methods:    {data: false, code: true,  prereg: false}
-  case_report:              {data: false, code: false, prereg: false}
-  opinion_commentary:       {data: false, code: false, prereg: false}
+  # `stats` controls whether statistical integrity checks (Benford's, effect sizes, etc.) apply.
+  empirical_quantitative:   {data: true,  code: true,  prereg: true,  stats: true}
+  clinical_trial:           {data: true,  code: false, prereg: true,  stats: true}
+  systematic_review_meta:   {data: true,  code: false, prereg: false, stats: true}
+  review_narrative:         {data: false, code: false, prereg: false, stats: false}  # no penalties for reviews
+  theoretical:              {data: false, code: false, prereg: false, stats: false}  # no penalties for theory
+  computational_methods:    {data: false, code: true,  prereg: false, stats: true}
+  case_report:              {data: false, code: false, prereg: false, stats: false}
+  opinion_commentary:       {data: false, code: false, prereg: false, stats: false}
 
 reproducibility:
   data_repo_patterns:
