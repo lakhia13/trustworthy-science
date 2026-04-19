@@ -19,8 +19,10 @@ const SIZES = {
 };
 
 export function TierBadge({ tier, size = 'md' }: TierBadgeProps) {
-  const cfg = TIER_CONFIG[tier];
-  const Icon = ICONS[tier];
+  // Normalize to lowercase so both "Trusted" (API) and "trusted" (mock) work
+  const key = tier.toLowerCase() as Tier;
+  const cfg = TIER_CONFIG[key] ?? TIER_CONFIG['caution'];
+  const Icon = ICONS[key] ?? ICONS['caution'];
   const s = SIZES[size];
 
   return (

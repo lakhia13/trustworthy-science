@@ -18,7 +18,7 @@ interface PaperCardProps {
 export function PaperCard({ paper, index, selected, onSelect, showCheckbox }: PaperCardProps) {
   const [hovered, setHovered] = useState(false);
   const navigate = useNavigate();
-  const cfg = TIER_CONFIG[paper.tier];
+  const cfg = TIER_CONFIG[(paper.tier.toLowerCase() as keyof typeof TIER_CONFIG)] ?? TIER_CONFIG['caution'];
 
   const stopAndCopy = (e: React.MouseEvent) => {
     e.stopPropagation();
