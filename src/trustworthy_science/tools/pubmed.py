@@ -99,43 +99,75 @@ def _parse_pubmed_xml(xml_text: str) -> list[PaperStub]:
 
 
 def _article_to_stub(article: ET.Element) -> PaperStub:
-    def text(path: str, default: str = "") -> str:
-        el = article.find(path)
-        return (el.text or "") if el is not None else default
+    # Scope all queries to the correct sub-trees to avoid picking up IDs,
+    # authors, or dates from the paper's reference list.
+    mc = article.find("MedlineCitation")
+    citation_article = mc.find("Article") if mc is not None else None
 
-    pmid = text(".//PMID")
-    title = text(".//ArticleTitle")
-    year_el = article.find(".//PubDate/Year")
-    year = int(year_el.text) if year_el is not None and year_el.text else None
-    journal = text(".//Journal/Title")
-    issn = text(".//ISSN")
+    # PMID — scoped to MedlineCitation only
+    pmid = (mc.findtext("PMID") or "") if mc is not None else ""
 
-    # Authors
-    authors = []
-    for author in article.findall(".//Author"):
-        last = text(".//LastName", "") if (ln := author.find("LastName")) is None else (ln.text or "")
-        fore = text(".//ForeName", "") if (fn := author.find("ForeName")) is None else (fn.text or "")
-        name = f"{fore} {last}".strip()
-        if name:
-            authors.append(name)
+    # Title
+    title = (citation_article.findtext("ArticleTitle") or "") if citation_article is not None else ""
 
-    # Abstract
-    abstract_parts = []
-    for ab in article.findall(".//AbstractText"):
-        if ab.text:
-            abstract_parts.append(ab.text)
+    # Journal + ISSN + Year — scoped to Article/Journal
+    journal_el = citation_article.find("Journal") if citation_article is not None else None
+    journal = (journal_el.findtext("Title") or "") if journal_el is not None else ""
+    issn = (journal_el.findtext("ISSN") or None) if journal_el is not None else None
+    pub_date = (journal_el.find("JournalIssue/PubDate") if journal_el is not None else None)
+    year = None
+    if pub_date is not None:
+        year_text = pub_date.findtext("Year")
+        if not year_text:
+            # Fall back to first 4 digits of MedlineDate (e.g. "2021 Jan-Feb")
+            medline = pub_date.findtext("MedlineDate") or ""
+            year_text = medline[:4] if medline[:4].isdigit() else None
+        if year_text:
+            try:
+                year = int(year_text)
+            except ValueError:
+                pass
+
+    # Authors — iterate the AuthorList directly under Article, not .//Author
+    # which would descend into reference author lists
+    authors: list[str] = []
+    author_list = citation_article.find("AuthorList") if citation_article is not None else None
+    if author_list is not None:
+        for author in author_list.findall("Author"):
+            last = (author.findtext("LastName") or "").strip()
+            fore = (author.findtext("ForeName") or "").strip()
+            name = f"{fore} {last}".strip()
+            if name:
+                authors.append(name)
+
+    # Abstract — scoped to Article/Abstract to avoid any embedded abstracts in references
+    abstract_parts: list[str] = []
+    abstract_el = citation_article.find("Abstract") if citation_article is not None else None
+    if abstract_el is not None:
+        for ab in abstract_el.findall("AbstractText"):
+            if ab.text:
+                abstract_parts.append(ab.text)
     abstract = " ".join(abstract_parts)
 
-    # DOI
-    doi = None
-    for id_el in article.findall(".//ArticleId"):
-        if id_el.get("IdType") == "doi":
-            doi = id_el.text
-            break
+    # DOI and PMCID — scoped to PubmedData/ArticleIdList (the paper's own IDs only).
+    # Using .//ArticleId descends into ReferenceList and picks up cited paper IDs.
+    doi: str | None = None
+    pmcid: str | None = None
+    pubmed_data = article.find("PubmedData")
+    if pubmed_data is not None:
+        id_list = pubmed_data.find("ArticleIdList")
+        if id_list is not None:
+            for id_el in id_list.findall("ArticleId"):
+                id_type = id_el.get("IdType")
+                if id_type == "doi" and doi is None:
+                    doi = id_el.text
+                elif id_type == "pmc" and pmcid is None:
+                    pmcid = id_el.text
 
     return PaperStub(
         doi=doi,
-        pmid=pmid,
+        pmid=pmid or None,
+        pmcid=pmcid,
         title=title,
         authors=authors,
         venue=journal,
@@ -173,3 +205,90 @@ def _strip_xml_tags(xml_text: str) -> str:
         return " ".join(root.itertext())
     except Exception:
         return xml_text
+
+
+# ---------------------------------------------------------------------------
+# BioC JSON full-text fetcher (PMID-based, gold-standard structured text)
+# ---------------------------------------------------------------------------
+
+_BIOC_BASE = "https://www.ncbi.nlm.nih.gov/research/bionlp/RESTful/pmcoa.cgi"
+
+# Map BioC infons 'type' values → our internal section keys
+_BIOC_SECTION_MAP: dict[str, str] = {
+    "title":       "title",
+    "abstract":    "abstract",
+    "intro":       "body",
+    "introduction":"body",
+    "methods":     "methods",
+    "materials":   "methods",
+    "results":     "results",
+    "discussion":  "discussion",
+    "conclusion":  "discussion",
+    "conclusions": "discussion",
+    "funding":     "funding",
+    "acknowledgement": "funding",
+    "acknowledgements": "funding",
+    "acknowledgment":  "funding",
+    "acknowledgments": "funding",
+    "coi":         "coi",
+    "conflict":    "coi",
+    "ref":         "references",
+    "references":  "references",
+    "fig_caption": "figures",
+    "table":       "tables",
+    "paragraph":   "body",
+}
+
+
+def fetch_bioc_fulltext(pmid: str) -> tuple[str, dict[str, str]]:
+    """Fetch full text of a paper from PMC via the BioC JSON API using a PMID.
+
+    Returns a tuple of:
+    - ``full_text``: A single string of the entire paper with section labels.
+    - ``sections``: A dict mapping section names (``"abstract"``, ``"methods"``,
+      ``"results"``, ``"discussion"``, ``"funding"``, ``"coi"``, ``"references"``)
+      to their concatenated text.  Empty string if that section was not found.
+
+    Falls back to ``("", {})`` on any error or if the paper is not in the
+    PMC Open Access subset.
+    """
+    cache = get_cache()
+    cached = cache.get("bioc_fulltext", pmid)
+    if cached is not None:
+        return cached["full_text"], cached["sections"]
+
+    url = f"{_BIOC_BASE}/BioC_json/{pmid}/unicode"
+    try:
+        r = httpx.get(url, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as exc:
+        logger.warning("[BioC] Fetch failed for PMID=%s: %s", pmid, exc)
+        return "", {}
+
+    full_parts: list[str] = []
+    section_buckets: dict[str, list[str]] = {}
+
+    documents = data if isinstance(data, list) else data.get("documents", [])
+    for doc in documents:
+        for passage in doc.get("passages", []):
+            infons = passage.get("infons", {})
+            raw_type = (infons.get("type") or infons.get("section_type") or "paragraph").lower()
+            section_key = _BIOC_SECTION_MAP.get(raw_type, "body")
+            text_content = passage.get("text", "").strip()
+            if not text_content:
+                continue
+            full_parts.append(f"[{raw_type.upper()}]\n{text_content}")
+            section_buckets.setdefault(section_key, []).append(text_content)
+
+    full_text = "\n\n".join(full_parts)
+    sections = {k: "\n\n".join(v) for k, v in section_buckets.items()}
+
+    if full_text:
+        cache.set("bioc_fulltext", {"full_text": full_text, "sections": sections}, pmid)
+        logger.info("[BioC] SUCCESS for PMID=%s — %d chars, sections: %s",
+                    pmid, len(full_text), list(sections.keys()))
+    else:
+        logger.info("[BioC] No passages returned for PMID=%s (not in PMC OA?)", pmid)
+
+    return full_text, sections

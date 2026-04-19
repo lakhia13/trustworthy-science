@@ -114,6 +114,33 @@ def fetch_biorxiv_fulltext(doi: str) -> str:
     return ""
 
 
+def europepmc_pmcid_for_doi(doi: str) -> str | None:
+    """Look up the PMCID for a DOI via the Europe PMC search API.
+
+    Returns the PMCID string (e.g. ``"PMC10157896"``) or ``None`` if not found.
+    This is a lightweight single-field query used only for PMCID discovery.
+    """
+    url = (
+        f"https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+        f"?query=DOI:{doi}&resultType=core&format=json&pageSize=1"
+    )
+    try:
+        cache = get_cache()
+        cached = cache.get("europepmc_pmcid", doi)
+        if cached is not None:
+            return cached or None  # "" stored as sentinel for "not found"
+        r = httpx.get(url, timeout=15)
+        r.raise_for_status()
+        results = r.json().get("resultList", {}).get("result", [])
+        pmcid = results[0].get("pmcid") if results else None
+        # Cache both hits and misses (store "" for not-found to avoid re-querying)
+        cache.set("europepmc_pmcid", pmcid or "", doi)
+        return pmcid or None
+    except Exception as exc:
+        logger.debug("EuropePMC PMCID lookup failed for %s: %s", doi, exc)
+        return None
+
+
 def fetch_biorxiv_by_doi(doi: str) -> PaperStub | None:
     """Fetch preprint metadata from bioRxiv by DOI."""
     url = f"{_BASE}/details/biorxiv/{doi}/na/json"

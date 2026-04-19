@@ -55,6 +55,8 @@ class ParsedPaper(BaseModel):
     coi_statement: str = ""
     submission_date: str | None = None
     acceptance_date: str | None = None
+    # Tracks which fetcher successfully retrieved the text
+    fetch_source: str = "unknown"  # e.g. "bioc", "pmc", "pdf_url", "biorxiv", etc.
 
 
 # ---------------------------------------------------------------------------

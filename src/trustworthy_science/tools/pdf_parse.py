@@ -1,10 +1,11 @@
-"""PDF and plain-text parsing utilities."""
+"""PDF, plain-text, and BioC JSON parsing utilities."""
 
 from __future__ import annotations
 
 import io
 import logging
 import re
+from typing import Any
 
 import httpx
 
@@ -75,3 +76,67 @@ def segment_sections(text: str) -> dict[str, str]:
             sections.setdefault(current, []).append(line)
 
     return {k: "\n".join(v).strip() for k, v in sections.items()}
+
+
+# ---------------------------------------------------------------------------
+# BioC JSON passage → sections converter
+# ---------------------------------------------------------------------------
+
+# Canonical mapping from BioC infons 'type' → our internal section keys.
+# Keep in sync with the copy in tools/pubmed.py.
+_BIOC_SECTION_MAP: dict[str, str] = {
+    "title":            "title",
+    "abstract":         "abstract",
+    "intro":            "body",
+    "introduction":     "body",
+    "methods":          "methods",
+    "materials":        "methods",
+    "results":          "results",
+    "discussion":       "discussion",
+    "conclusion":       "discussion",
+    "conclusions":      "discussion",
+    "funding":          "funding",
+    "acknowledgement":  "funding",
+    "acknowledgements": "funding",
+    "acknowledgment":   "funding",
+    "acknowledgments":  "funding",
+    "coi":              "coi",
+    "conflict":         "coi",
+    "ref":              "references",
+    "references":       "references",
+    "fig_caption":      "figures",
+    "table":            "tables",
+    "paragraph":        "body",
+}
+
+
+def parse_bioc_json(bioc_data: Any) -> tuple[str, dict[str, str]]:
+    """Convert a raw BioC JSON response (already decoded) into text + sections.
+
+    Accepts the top-level BioC value which may be a list of documents or a
+    dict containing a ``"documents"`` key.
+
+    Returns:
+        full_text: Entire paper as a labelled string (``[SECTION]\\ntext``).
+        sections:  Dict mapping section names to concatenated passage text.
+    """
+    full_parts: list[str] = []
+    section_buckets: dict[str, list[str]] = {}
+
+    documents = bioc_data if isinstance(bioc_data, list) else bioc_data.get("documents", [])
+    for doc in documents:
+        for passage in doc.get("passages", []):
+            infons = passage.get("infons", {})
+            raw_type = (
+                infons.get("type") or infons.get("section_type") or "paragraph"
+            ).lower()
+            section_key = _BIOC_SECTION_MAP.get(raw_type, "body")
+            text_content = passage.get("text", "").strip()
+            if not text_content:
+                continue
+            full_parts.append(f"[{raw_type.upper()}]\n{text_content}")
+            section_buckets.setdefault(section_key, []).append(text_content)
+
+    full_text = "\n\n".join(full_parts)
+    sections = {k: "\n\n".join(v) for k, v in section_buckets.items()}
+    return full_text, sections
