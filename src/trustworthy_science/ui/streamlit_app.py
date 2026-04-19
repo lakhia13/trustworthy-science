@@ -31,7 +31,22 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
-# Sidebar — config & controls
+# Load base config from file (once at module level)
+# ---------------------------------------------------------------------------
+
+import yaml  # noqa: E402
+
+base_config_path = Path(__file__).parent.parent.parent / "config" / "scoring.yaml"
+try:
+    with open(base_config_path) as _f:
+        _base_config = yaml.safe_load(_f)
+    _base_yaml_text = base_config_path.read_text()
+except Exception:
+    _base_config = {}
+    _base_yaml_text = "# Could not load scoring.yaml\n"
+
+# ---------------------------------------------------------------------------
+# Sidebar — full YAML config editor
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
@@ -39,19 +54,23 @@ with st.sidebar:
     st.caption("AI-powered credibility filter for scientific literature")
     st.divider()
 
-    st.subheader("Scoring weights")
-    st.caption("These values tune the credibility formula live.")
+    st.subheader("Scoring Weights")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        w_retract = st.number_input("Retraction cap", 0, 50, 25, step=1)
+        w_no_data = st.number_input("No data deposit", 0, 20, 8, step=1)
+        w_replicated = st.number_input("Replicated bonus", 0, 20, 10, step=1)
+    with col_b:
+        w_open_data = st.number_input("Open data bonus", 0, 15, 6, step=1)
+        w_methods = st.number_input("Methods nudge %", 0, 50, 15, step=5)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        w_retract = st.number_input("Retraction cap", value=25, min_value=0, max_value=50)
-        w_no_data = st.number_input("No data deposit", value=8, min_value=0, max_value=20)
-    with col2:
-        w_replicated = st.number_input("Replicated bonus", value=10, min_value=0, max_value=20)
-        w_open_data = st.number_input("Open data bonus", value=6, min_value=0, max_value=15)
-        w_methods = st.number_input("Methods nudge %", value=15, min_value=0, max_value=50, step=5)
+    st.divider()
 
-    min_tier = st.selectbox("Minimum tier to include", ["Caution", "Trusted", "Untrusted"], index=0)
+    min_tier = st.selectbox(
+        "Minimum tier to include (filter only)",
+        ["Caution", "Trusted", "Untrusted"],
+        index=0,
+    )
     st.divider()
     st.caption("v0.1 — Hackathon MVP")
 
@@ -62,22 +81,17 @@ with st.sidebar:
 
 from trustworthy_science import TruthFilter  # noqa: E402
 
-base_config_path = Path(__file__).parent.parent.parent / "config" / "scoring.yaml"
-try:
-    import yaml
-    with open(base_config_path) as f:
-        _base_config = yaml.safe_load(f)
-except Exception:
-    _base_config = {}
 
-
-def _build_config():
-    cfg = json.loads(json.dumps(_base_config))  # deep copy via JSON
-    cfg.setdefault("tiers", {})["hard_flag_cap"] = w_retract
-    cfg.setdefault("soft_flags", {}).setdefault("NO_DATA_DEPOSIT", {})["penalty"] = w_no_data
-    cfg.setdefault("quality_signals", {}).setdefault("INDEPENDENTLY_REPLICATED", {})["bonus"] = w_replicated
-    cfg.setdefault("quality_signals", {}).setdefault("OPEN_DATA", {})["bonus"] = w_open_data
-    cfg.setdefault("scoring", {})["methods_nudge_weight"] = w_methods / 100.0
+def _build_config() -> dict:
+    """Overlay the five sidebar slider values onto the base file config."""
+    import copy, json
+    cfg = json.loads(json.dumps(_base_config))  # deep copy via JSON round-trip
+    scoring = cfg.setdefault("scoring", {})
+    scoring["retraction_cap"] = w_retract
+    scoring["no_data_deposit_penalty"] = w_no_data
+    scoring["replicated_bonus"] = w_replicated
+    scoring["open_data_bonus"] = w_open_data
+    scoring["methods_nudge_pct"] = w_methods
     return cfg
 
 
@@ -142,7 +156,18 @@ def render_structured_report(result: dict) -> None:
                 rat = entry.get("rationale", "") if isinstance(entry, dict) else entry.rationale
                 rows.append({"Dimension": dim, "Score (%)": pct, "Rationale": rat})
             df = pd.DataFrame(rows)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(
+                df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Dimension": st.column_config.TextColumn(width="small"),
+                    "Score (%)": st.column_config.ProgressColumn(
+                        min_value=0, max_value=100, format="%d%%", width="small"
+                    ),
+                    "Rationale": st.column_config.TextColumn(width="large"),
+                },
+            )
 
         # Key concerns
         concerns = sr.get("key_concerns", [])
@@ -176,7 +201,7 @@ def render_structured_report(result: dict) -> None:
             st.success("Positive signals: " + " | ".join(result["quality_signals"]))
 
 
-def render_paper_card(r: dict, key_prefix: str = "") -> None:
+def render_paper_card(r: dict, key_prefix: str = "", detail_state_key: str = "selected_paper_data") -> None:
     tier = r.get("tier", "Unknown")
     score = r.get("score", 0)
     color = _TIER_COLOR.get(tier, "#95a5a6")
@@ -204,7 +229,7 @@ def render_paper_card(r: dict, key_prefix: str = "") -> None:
         key = f"{key_prefix}_detail_{uid}"
         if uid and st.button("Full Report", key=key):
             st.session_state["selected_paper"] = uid
-            st.session_state["selected_paper_data"] = r
+            st.session_state[detail_state_key] = r
 
 
 # ---------------------------------------------------------------------------
@@ -334,13 +359,14 @@ with tab_score:
 with tab_deep:
     st.header("Deep Research")
     st.caption(
-        "Describe your research task and the system will automatically generate PubMed queries, "
+        "Describe your research task and the system will automatically extract PICO concepts, "
+        "validate them against the MeSH database, generate Boolean PubMed queries, "
         "score all retrieved papers, and build a credibility-filtered literature review."
     )
 
     research_prompt = st.text_area(
         "Research task",
-        placeholder="I want to design a new cancer drug trial",
+        placeholder="I want to design a randomized clinical trial for a novel new antibiotic drug",
         height=80,
     )
     col_k, col_tier = st.columns(2)
@@ -380,16 +406,41 @@ with tab_deep:
         cited = dr_result.get("cited_papers", [])
         session_id = dr_result.get("session_id", "")
         collection_name = dr_result.get("collection_name", "")
+        mesh_terms = dr_result.get("mesh_terms", [])
+        query_metadata = dr_result.get("query_metadata", [])
 
-        # Generated queries
-        if queries:
-            with st.expander("Generated PubMed Queries", expanded=False):
-                for i, q in enumerate(queries, 1):
-                    st.markdown(f"**{i}.** `{q}`")
+        # Build a lookup: query text → pmid_count for easy display
+        _qmeta = {m.get("query", ""): m.get("pmid_count", 0) for m in query_metadata}
+
+        # ---------------------------------------------------------------
+        # Generated queries + MeSH terms panel
+        # ---------------------------------------------------------------
+        if queries or mesh_terms:
+            with st.expander("Search Strategy", expanded=True):
+                # MeSH terms validated
+                if mesh_terms:
+                    st.markdown("**MeSH Terms Used**")
+                    st.markdown(
+                        " &nbsp;·&nbsp; ".join(
+                            f"`{t}`" for t in mesh_terms
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    st.divider()
+
+                # Generated Boolean queries with result counts
+                if queries:
+                    st.markdown("**Generated PubMed Queries**")
+                    for i, q in enumerate(queries, 1):
+                        count = _qmeta.get(q, None)
+                        count_badge = f" — **{count} results**" if count is not None else ""
+                        st.markdown(f"**{i}.** `{q}`{count_badge}")
 
         st.divider()
 
+        # ---------------------------------------------------------------
         # Literature review
+        # ---------------------------------------------------------------
         st.subheader("Literature Review")
         if review:
             st.write(review)
@@ -411,19 +462,50 @@ with tab_deep:
 
         st.divider()
 
+        # ---------------------------------------------------------------
         # Accepted paper cards
+        # ---------------------------------------------------------------
         if accepted:
             st.subheader(f"Accepted Papers ({len(accepted)} ≥ {dr_min_tier})")
             for r in accepted:
-                render_paper_card(r, key_prefix="dr_acc")
+                render_paper_card(r, key_prefix="dr_acc", detail_state_key="dr_selected_paper_data")
         elif scored:
             st.warning(f"No papers met the minimum tier '{dr_min_tier}'. Showing all scored papers:")
             for r in scored:
-                render_paper_card(r, key_prefix="dr_scored")
+                render_paper_card(r, key_prefix="dr_scored", detail_state_key="dr_selected_paper_data")
+
+        # -------------------------------------------------------------------
+        # Paper Detail panel (Deep Research)
+        # -------------------------------------------------------------------
+        dr_sel = st.session_state.get("dr_selected_paper_data")
+        if dr_sel:
+            st.divider()
+            st.subheader("Paper Detail")
+            st.subheader(dr_sel.get("title", dr_sel.get("doi", "—")))
+            st.caption(
+                f"{dr_sel.get('venue', '')} | {dr_sel.get('year', '')} | DOI: {dr_sel.get('doi', '—')}"
+            )
+            st.divider()
+            render_structured_report(dr_sel)
+            with st.expander("Raw JSON"):
+                safe = {}
+                for k, v in dr_sel.items():
+                    if hasattr(v, "model_dump"):
+                        safe[k] = v.model_dump()
+                    elif isinstance(v, list):
+                        safe[k] = [x.model_dump() if hasattr(x, "model_dump") else x for x in v]
+                    else:
+                        safe[k] = v
+                st.json(safe)
+        else:
+            st.divider()
+            st.info("Click **Full Report** on any paper card above to see its detailed credibility report.")
 
         st.divider()
 
+        # ---------------------------------------------------------------
         # Chat window
+        # ---------------------------------------------------------------
         st.subheader("Chat with the Research Collection")
         if not collection_name:
             st.warning("No ChromaDB collection available — run Deep Research first.")
@@ -433,7 +515,6 @@ with tab_deep:
                 f"Collection: `{collection_name}`  |  Session: `{session_id[:8]}...`"
             )
 
-            # Display conversation history
             if "chat_history" not in st.session_state:
                 st.session_state["chat_history"] = []
 

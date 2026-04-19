@@ -201,6 +201,12 @@ class DeepResearchState(BaseModel):
     # Populated by query_generator node
     generated_queries: list[str] = Field(default_factory=list)
 
+    # MeSH terms validated during query generation (for UI display)
+    mesh_terms: list[str] = Field(default_factory=list)
+
+    # Per-query metadata: list of {query, pmid_count} dicts (populated during fetch)
+    query_metadata: list[dict] = Field(default_factory=list)
+
     # Populated by parallel_pubmed_fetch node
     candidate_stubs: Annotated[list[PaperStub], operator.add] = Field(default_factory=list)
 

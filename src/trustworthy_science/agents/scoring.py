@@ -36,7 +36,7 @@ Soft flags raised:
 Quality signals:
 {quality_signals}
 
-Per-dimension scores (0.0 = poor, 1.0 = excellent):
+Per-dimension scores and sub-agent notes (0.0 = poor, 1.0 = excellent):
 {per_dimension}
 
 Write a structured credibility report using EXACTLY the following section headings \
@@ -50,6 +50,7 @@ Use "signals of concern" not "fraud" or "fake".
 SCORE BREAKDOWN
 One line per dimension in the format: DimensionName | ScorePct | One-sentence rationale.
 ScorePct is the dimension score multiplied by 100 and rounded to the nearest integer.
+Base your rationale on the sub-agent notes provided above.
 
 KEY CONCERNS
 Each concern on its own line starting with "- ". List only the most significant \
@@ -61,7 +62,8 @@ Each signal on its own line starting with "- ". List quality signals with a brie
 plain-English explanation. Write "None" if there are no positive signals.
 
 RECOMMENDATION
-One sentence only: tell the scientist whether to cite with caution, \
+One sentence only. Do NOT explain your reasoning here. \
+State only your final recommendation: whether to cite with caution, \
 safely include, or exclude the paper.
 """
 
@@ -102,9 +104,10 @@ def scoring_agent(state: PaperState, config: dict | None = None) -> dict:
     ]
 
     # Generate structured report via LLM (falls back to deterministic if unavailable)
+    # Pass the full per_dimension list (with reason strings) so the LLM prompt is grounded
     structured = _generate_structured_report(
         state, score, tier,
-        {d["dimension"]: d["score"] for d in per_dimension},
+        per_dimension,   # full list[dict] with dimension/score/reason
         config,
     )
 
@@ -134,7 +137,7 @@ def _generate_structured_report(
     state: PaperState,
     score: int,
     tier: str,
-    per_dimension: dict[str, float],
+    per_dimension: list[dict],  # full list with dimension/score/reason
     config: dict | None,
 ) -> StructuredReport:
     """Use LLM to generate a structured, section-by-section credibility report."""
@@ -144,6 +147,22 @@ def _generate_structured_report(
             return "None"
         return "; ".join(f"{f.code}: {f.message[:80]}" for f in flags[:6])
 
+    # Format per-dimension with sub-agent reason strings for prompt grounding
+    def _fmt_per_dimension(dims: list[dict]) -> str:
+        lines = []
+        for d in dims:
+            name = d.get("dimension", "unknown")
+            sc = d.get("score", 0.0)
+            reason = d.get("reason", "").strip()
+            if reason:
+                lines.append(f"  {name}: {sc:.2f}  — Sub-agent note: {reason[:200]}")
+            else:
+                lines.append(f"  {name}: {sc:.2f}")
+        return "\n".join(lines) if lines else "None"
+
+    # Build a lookup dict for fallback path
+    per_dim_lookup = {d["dimension"]: d for d in per_dimension}
+
     prompt = _STRUCTURED_REPORT_PROMPT.format(
         title=state.stub.title or "Unknown",
         year=state.stub.year or "unknown year",
@@ -152,7 +171,7 @@ def _generate_structured_report(
         hard_flags=_fmt_flags(state.hard_flags),
         soft_flags=_fmt_flags(state.soft_flags),
         quality_signals=_fmt_flags(state.quality_signals),
-        per_dimension="\n".join(f"  {k}: {v:.2f}" for k, v in per_dimension.items()),
+        per_dimension=_fmt_per_dimension(per_dimension),
     )
 
     try:
@@ -160,10 +179,10 @@ def _generate_structured_report(
         from langchain_core.messages import HumanMessage
         response = llm.invoke([HumanMessage(content=prompt)])
         raw = strip_think_tokens(response.content)
-        return _parse_structured_report(raw, score, tier, per_dimension, state)
+        return _parse_structured_report(raw, score, tier, per_dim_lookup, state)
     except Exception as exc:
         logger.warning("Structured report generation failed: %s", exc)
-        return _fallback_structured_report(score, tier, state, per_dimension)
+        return _fallback_structured_report(score, tier, state, per_dim_lookup)
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +200,7 @@ def _parse_structured_report(
     raw: str,
     score: int,
     tier: str,
-    per_dimension: dict[str, float],
+    per_dim_lookup: dict[str, dict],  # dimension -> {dimension, score, reason}
     state: PaperState,
 ) -> StructuredReport:
     """Tolerantly parse LLM section output into a StructuredReport.
@@ -231,12 +250,14 @@ def _parse_structured_report(
                 pass
 
     # Fill from per_dimension data if LLM breakdown was empty / malformed
+    # Use sub-agent reason strings so the fallback table is also informative
     if not breakdown:
-        for dim_name, dim_score in per_dimension.items():
+        for dim_name, dim_data in per_dim_lookup.items():
+            fallback_reason = dim_data.get("reason", "").strip()
             breakdown.append(ScoreBreakdownEntry(
                 dimension=dim_name,
-                score_pct=round(dim_score * 100),
-                rationale="",
+                score_pct=round(dim_data.get("score", 0.0) * 100),
+                rationale=fallback_reason,
             ))
 
     # --- Key concerns ---
@@ -292,12 +313,11 @@ def _fallback_structured_report(
     score: int,
     tier: str,
     state: PaperState,
-    per_dimension: dict[str, float],
+    per_dim_lookup: dict[str, dict],  # dimension -> {dimension, score, reason}
 ) -> StructuredReport:
     """Produce a StructuredReport deterministically when the LLM is unavailable."""
     hard = [f.code for f in state.hard_flags]
     soft = [f.code for f in state.soft_flags]
-    quality = [f.code for f in state.quality_signals]
 
     if hard:
         overall_verdict = (
@@ -313,10 +333,15 @@ def _fallback_structured_report(
     breakdown = [
         ScoreBreakdownEntry(
             dimension=dim,
-            score_pct=round(v * 100),
-            rationale=state.sub_scores[dim].reason if dim in state.sub_scores else "",
+            score_pct=round(data.get("score", 0.0) * 100),
+            # Prefer sub_scores reason (freshest), fall back to stored reason in lookup
+            rationale=(
+                state.sub_scores[dim].reason
+                if dim in state.sub_scores
+                else data.get("reason", "")
+            ),
         )
-        for dim, v in per_dimension.items()
+        for dim, data in per_dim_lookup.items()
     ]
 
     concerns = [f"{f.code}: {f.message}" for f in (state.hard_flags + state.soft_flags)[:5]]

@@ -237,6 +237,8 @@ class TruthFilter:
             "accepted_papers": ds.accepted_papers,
             "scored_papers": ds.scored_papers,
             "generated_queries": ds.generated_queries,
+            "mesh_terms": ds.mesh_terms,
+            "query_metadata": ds.query_metadata,
             "literature_review": review.narrative,
             "cited_papers": review.cited_papers,
             "session_id": review.session_id,

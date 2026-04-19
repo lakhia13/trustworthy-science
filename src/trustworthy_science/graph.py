@@ -221,7 +221,6 @@ def _make_deep_research_graph(config: dict | None = None):
     3. ``score_all``            — scores every stub through the per-paper sub-graph
     4. ``rag_ingest``           — filters by min_tier, ingests into ChromaDB
     """
-    from trustworthy_science.agents.deep_research import generate_queries
     from trustworthy_science.tools.pubmed import search_pubmed, fetch_pubmed_metadata
     from trustworthy_science.tools.chroma_store import ingest_papers
 
@@ -230,13 +229,21 @@ def _make_deep_research_graph(config: dict | None = None):
     max_papers = cfg.get("rag", {}).get("max_papers_per_session", 30)
 
     def query_generator_node(state: DeepResearchState) -> dict:
-        queries = generate_queries(state.user_prompt, config=cfg)
+        from trustworthy_science.agents.deep_research import _run_librarian_agent
+        queries, mesh_terms = _run_librarian_agent(state.user_prompt, config=cfg)
+        if not queries:
+            queries = [state.user_prompt]
+            mesh_terms = []
         # Auto-generate a collection name if not set
         collection = state.collection_name
         if not collection:
             slug = hashlib.sha256(state.user_prompt.encode()).hexdigest()[:12]
             collection = f"research_{slug}"
-        return {"generated_queries": queries, "collection_name": collection}
+        return {
+            "generated_queries": queries,
+            "mesh_terms": mesh_terms,
+            "collection_name": collection,
+        }
 
     def parallel_pubmed_fetch_node(state: DeepResearchState) -> dict:
         """Fetch papers for every generated query and return deduplicated stubs."""
@@ -244,23 +251,27 @@ def _make_deep_research_graph(config: dict | None = None):
         seen: set[str] = set()
         per_query = max(3, max_papers // max(len(state.generated_queries), 1))
 
+        query_metadata: list[dict] = []
         for query in state.generated_queries:
             try:
                 pmids = search_pubmed(query, max_results=per_query)
                 new_stubs = fetch_pubmed_metadata(pmids)
+                count_before = len(stubs)
                 for stub in new_stubs:
                     key = stub.doi or stub.pmid or stub.title
                     if key and key not in seen:
                         seen.add(key)
                         stubs.append(stub)
+                query_metadata.append({"query": query, "pmid_count": len(pmids)})
             except Exception as exc:
                 logger.warning("[DEEP_RESEARCH] PubMed fetch failed for '%s': %s", query, exc)
+                query_metadata.append({"query": query, "pmid_count": 0})
 
         # Hard cap to prevent runaway
         stubs = stubs[:max_papers]
         logger.info("[DEEP_RESEARCH] Fetched %d unique stubs from %d queries",
                     len(stubs), len(state.generated_queries))
-        return {"candidate_stubs": stubs}
+        return {"candidate_stubs": stubs, "query_metadata": query_metadata}
 
     def score_all_node(state: DeepResearchState) -> dict:
         """Score every candidate stub through the per-paper graph."""
