@@ -17,6 +17,7 @@ from trustworthy_science.server.routes.explain import router as explain_router
 from trustworthy_science.server.routes.filter import router as filter_router
 from trustworthy_science.server.routes.admin import router as admin_router
 from trustworthy_science.server.routes.deep_research import router as deep_research_router
+from trustworthy_science.server.routes.mesh import router as mesh_router
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,7 @@ def create_app() -> FastAPI:
     app.include_router(filter_router,        prefix="/filter",            tags=["filtering"])
     app.include_router(admin_router,         prefix="/admin",             tags=["admin"])
     app.include_router(deep_research_router, prefix="/api/deep-research", tags=["deep-research"])
+    app.include_router(mesh_router,          prefix="/api/mesh",          tags=["mesh"])
 
     return app
 
