@@ -13,6 +13,7 @@ from trustworthy_science.server.dependencies import get_truth_filter
 # Shared mock data
 # ---------------------------------------------------------------------------
 
+# per_dimension uses the new list-of-dicts format produced by scoring_agent
 _MOCK_PAPER: dict = {
     "title": "Test Paper",
     "doi": "10.1038/nature12345",
@@ -27,7 +28,10 @@ _MOCK_PAPER: dict = {
     "hard_flags": [],
     "soft_flags": ["NO_DATA_DEPOSIT"],
     "quality_signals": ["OPEN_DATA"],
-    "per_dimension": {"stats_integrity": 0.9, "methodology": 0.85},
+    "per_dimension": [
+        {"dimension": "stats_integrity", "score": 0.9, "reason": "Solid stats."},
+        {"dimension": "methodology", "score": 0.85, "reason": "Good methods."},
+    ],
 }
 
 
@@ -118,7 +122,9 @@ def test_explain_by_pmid(client):
     assert data["pmid"] == "23193264"
     assert data["fetch_source"] == "bioc"
     assert "per_dimension" in data
-    assert data["per_dimension"]["stats_integrity"] == pytest.approx(0.9)
+    # per_dimension is now a list of {dimension, score, reason} objects
+    dims = {d["dimension"]: d["score"] for d in data["per_dimension"]}
+    assert dims["stats_integrity"] == pytest.approx(0.9)
     tf.score_single_by_pmid.assert_called_once_with("23193264")
 
 

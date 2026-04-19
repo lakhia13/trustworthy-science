@@ -73,11 +73,12 @@ def methodology_agent(state: PaperState, config: dict | None = None) -> dict:
 
 def _call_llm(prompt: str, max_tokens: int, config: dict | None = None) -> dict:
     """Call the K2 (OpenAI-compatible) LLM and return parsed JSON response."""
+    from trustworthy_science.llm import strip_think_tokens
     llm = get_llm(max_tokens=max_tokens, config=config)
 
     from langchain_core.messages import HumanMessage
     response = llm.invoke([HumanMessage(content=prompt)])
-    raw = response.content.strip()
+    raw = strip_think_tokens(response.content)
     # Strip markdown code fences if present
     if raw.startswith("```"):
         raw = raw.split("```")[1]
@@ -102,6 +103,8 @@ def _process_result(result: dict, state: PaperState) -> dict:
         # If shorter than 15 chars or found in text, trust it; otherwise skip
         if len(w) < 15 or any(token in source_text for token in w.split()[:4]):
             validated_weaknesses.append(w)
+
+    strengths = result.get("strengths", [])
 
     if not result.get("sample_size_justified", True):
         soft_flags.append(Flag(
@@ -134,11 +137,15 @@ def _process_result(result: dict, state: PaperState) -> dict:
     confidence = 0.80 if state.coverage == "full_text" else 0.50
 
     notes = f"LLM methods score: {overall:.2f}. Weaknesses: {'; '.join(validated_weaknesses[:3]) or 'none detected'}."
+    
+    reason = f"Strengths: {'; '.join(strengths)}. Weaknesses: {'; '.join(validated_weaknesses)}."
+
     sub = SubScore(
         score=overall,
         confidence=confidence,
         flags=soft_flags + quality_signals,
         notes=notes,
+        reason=reason,
     )
 
     return {

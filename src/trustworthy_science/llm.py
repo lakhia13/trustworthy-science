@@ -8,10 +8,55 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from functools import lru_cache
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Think-token stripping
+# ---------------------------------------------------------------------------
+
+# Patterns for common chain-of-thought delimiters emitted by reasoning models.
+# K2-Think-v2 uses <think>...</think>; other models may use <reasoning>...</reasoning>
+# or ```thinking ... ``` fenced blocks.
+_THINK_PATTERNS: list[re.Pattern] = [
+    re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE),
+    re.compile(r"<thinking>.*?</thinking>", re.DOTALL | re.IGNORECASE),
+    re.compile(r"<reasoning>.*?</reasoning>", re.DOTALL | re.IGNORECASE),
+    re.compile(r"```thinking\s.*?```", re.DOTALL),
+]
+
+
+def strip_think_tokens(raw: str) -> str:
+    """Remove chain-of-thought / thinking blocks from an LLM response.
+
+    Handles ``<think>...</think>``, ``<thinking>...</thinking>``,
+    ``<reasoning>...</reasoning>``, and fenced triple-backtick ``thinking`` blocks.
+    Returns the remaining text stripped of leading/trailing whitespace.
+    If no known delimiter is found the original string is returned unchanged.
+
+    Examples
+    --------
+    >>> strip_think_tokens("<think>Let me reason...</think>\\nFinal answer.")
+    'Final answer.'
+    """
+    result = raw
+    had_match = False
+    for pattern in _THINK_PATTERNS:
+        stripped = pattern.sub("", result)
+        if stripped != result:
+            had_match = True
+            result = stripped
+
+    if not had_match and ("<think>" in raw or "<thinking>" in raw or "<reasoning>" in raw):
+        logger.warning(
+            "strip_think_tokens: detected thinking delimiter but could not strip it. "
+            "Returning raw content to avoid data loss."
+        )
+
+    return result.strip()
 
 # Repository root (.env lives here)
 _REPO_ROOT = Path(__file__).parent.parent.parent

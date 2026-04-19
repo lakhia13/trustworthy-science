@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, List
 from pydantic import BaseModel, Field
 import operator
 
@@ -89,11 +89,40 @@ class SubScore(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)    # how sure is the agent
     flags: list[Flag] = Field(default_factory=list)
     notes: str = ""
+    reason: str = ""
 
 
 # ---------------------------------------------------------------------------
 # Final trust report
 # ---------------------------------------------------------------------------
+class DimensionScore(BaseModel):
+    dimension: str
+    score: float
+    reason: str
+
+
+class ScoreBreakdownEntry(BaseModel):
+    """One row in the per-dimension breakdown table of a structured report."""
+    dimension: str
+    score_pct: int = Field(ge=0, le=100)
+    rationale: str
+
+
+class StructuredReport(BaseModel):
+    """Structured, section-by-section scoring report produced by the scoring agent.
+
+    This replaces the flat narrative summary for human-readable output.
+    The ``summary`` field on TrustReport is kept as a flattened fallback for
+    backward-compatible API consumers.
+    """
+    overall_verdict: str = ""
+    score_breakdown: list[ScoreBreakdownEntry] = Field(default_factory=list)
+    key_concerns: list[str] = Field(default_factory=list)
+    positive_signals: list[str] = Field(default_factory=list)
+    recommendation: str = ""
+    raw_score: int = 0
+    tier: str = "Untrusted"
+
 
 class TrustReport(BaseModel):
     composite_score: int = Field(ge=0, le=100)
@@ -102,8 +131,9 @@ class TrustReport(BaseModel):
     hard_flags: list[Flag] = Field(default_factory=list)
     soft_flags: list[Flag] = Field(default_factory=list)
     quality_signals: list[Flag] = Field(default_factory=list)
-    per_dimension: dict[str, float] = Field(default_factory=dict)
+    per_dimension: list[DimensionScore] = Field(default_factory=list)
     coverage: str = "metadata_only"
+    structured_report: StructuredReport | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -151,3 +181,36 @@ class GraphInput(BaseModel):
 class GraphOutput(BaseModel):
     papers: list[PaperState] = Field(default_factory=list)
     filtered: list[dict[str, Any]] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Deep Research state
+# ---------------------------------------------------------------------------
+
+class DeepResearchState(BaseModel):
+    """State for the Deep Research LangGraph pipeline.
+
+    Flows through: query_generator → parallel_pubmed_fetch → score_all → rag_ingest
+    """
+    # Set by user at entry
+    user_prompt: str = ""
+    top_k: int = 20
+    min_tier: Literal["Trusted", "Caution", "Untrusted"] = "Caution"
+    collection_name: str = ""       # ChromaDB collection; auto-generated if empty
+
+    # Populated by query_generator node
+    generated_queries: list[str] = Field(default_factory=list)
+
+    # Populated by parallel_pubmed_fetch node
+    candidate_stubs: Annotated[list[PaperStub], operator.add] = Field(default_factory=list)
+
+    # Populated by score_all node
+    scored_papers: list[dict[str, Any]] = Field(default_factory=list)
+
+    # Populated by rag_ingest node (papers that passed min_tier)
+    accepted_papers: list[dict[str, Any]] = Field(default_factory=list)
+
+    # Error message if pipeline fails
+    error: str | None = None
+
+    model_config = {"arbitrary_types_allowed": True}

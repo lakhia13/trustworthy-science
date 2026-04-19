@@ -1,15 +1,15 @@
 from __future__ import annotations
-from typing import Any, Literal
+from typing import Any, Literal, List, Optional
 from pydantic import BaseModel, Field, model_validator
 
-class ScoreRequest(BaseModel):
+class SearchRequest(BaseModel):
     dois: list[str] = []
     pmids: list[str] = []
     query: str | None = None
     top_k: int = Field(default=10, ge=1, le=50)
 
     @model_validator(mode="after")
-    def at_least_one_identifier(self) -> "ScoreRequest":
+    def at_least_one_identifier(self) -> "SearchRequest":
         if not self.dois and not self.pmids and not self.query:
             raise ValueError("Provide at least one of: dois, pmids, query")
         return self
@@ -33,6 +33,58 @@ class ExplainRequest(BaseModel):
             raise ValueError("Provide only one of doi or pmid, not both")
         return self
 
+class DimensionScore(BaseModel):
+    dimension: str
+    score: float
+    reason: str
+
+
+def _coerce_per_dimension(raw: Any) -> list[DimensionScore]:
+    """Normalise per_dimension from either old dict or new list format.
+
+    Old format (pre-structured-report): ``{"stats_integrity": 0.9, ...}``
+    New format: ``[{"dimension": "stats_integrity", "score": 0.9, "reason": "..."}]``
+    """
+    if not raw:
+        return []
+    if isinstance(raw, dict):
+        # Legacy dict format — convert to list of DimensionScore
+        return [
+            DimensionScore(dimension=k, score=float(v), reason="")
+            for k, v in raw.items()
+            if isinstance(v, (int, float))
+        ]
+    if isinstance(raw, list):
+        result = []
+        for item in raw:
+            if isinstance(item, dict):
+                try:
+                    result.append(DimensionScore(**item))
+                except Exception:
+                    pass
+            elif isinstance(item, DimensionScore):
+                result.append(item)
+        return result
+    return []
+
+class StructuredReportEntry(BaseModel):
+    """One row in the per-dimension breakdown of a structured report."""
+    dimension: str
+    score_pct: int
+    rationale: str
+
+
+class StructuredReportSchema(BaseModel):
+    """Structured, section-wise credibility report."""
+    overall_verdict: str = ""
+    score_breakdown: list[StructuredReportEntry] = []
+    key_concerns: list[str] = []
+    positive_signals: list[str] = []
+    recommendation: str = ""
+    raw_score: int = 0
+    tier: str = "Untrusted"
+
+
 class PaperResult(BaseModel):
     title: str = ""
     doi: str | None = None
@@ -47,11 +99,35 @@ class PaperResult(BaseModel):
     hard_flags: list[str] = []
     soft_flags: list[str] = []
     quality_signals: list[str] = []
-    per_dimension: dict[str, float] = {}  # populated by /explain; empty for /score
+    per_dimension: list[DimensionScore] = []
+    structured_report: Optional[StructuredReportSchema] = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "PaperResult":
         """Coerce a raw TruthFilter result dict into a PaperResult."""
+        # Handle structured_report — may be a Pydantic model or a plain dict
+        sr_raw = d.get("structured_report")
+        sr = None
+        if sr_raw is not None:
+            if hasattr(sr_raw, "model_dump"):
+                sr_raw = sr_raw.model_dump()
+            if isinstance(sr_raw, dict):
+                try:
+                    sr = StructuredReportSchema(
+                        overall_verdict=sr_raw.get("overall_verdict", ""),
+                        score_breakdown=[
+                            StructuredReportEntry(**e)
+                            for e in sr_raw.get("score_breakdown", [])
+                        ],
+                        key_concerns=sr_raw.get("key_concerns", []),
+                        positive_signals=sr_raw.get("positive_signals", []),
+                        recommendation=sr_raw.get("recommendation", ""),
+                        raw_score=sr_raw.get("raw_score", 0),
+                        tier=sr_raw.get("tier", "Untrusted"),
+                    )
+                except Exception:
+                    sr = None
+
         return cls(
             title=d.get("title", ""),
             doi=d.get("doi"),
@@ -66,8 +142,19 @@ class PaperResult(BaseModel):
             hard_flags=d.get("hard_flags", []),
             soft_flags=d.get("soft_flags", []),
             quality_signals=d.get("quality_signals", []),
-            per_dimension=d.get("per_dimension", {}),
+            per_dimension=_coerce_per_dimension(d.get("per_dimension")),
+            structured_report=sr,
         )
+
+class JobResponse(BaseModel):
+    job_id: str
+
+class JobStatus(BaseModel):
+    status: str
+    message: Optional[str] = None
+    total: int = 0
+    completed: int = 0
+    results: Optional[List[PaperResult]] = None
 
 class ScoreResponse(BaseModel):
     papers: list[PaperResult]

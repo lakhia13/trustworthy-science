@@ -8,8 +8,8 @@ from typing import Any, Literal
 
 import yaml
 
-from trustworthy_science.graph import build_graph, _make_paper_graph
-from trustworthy_science.state import GraphInput, PaperState, PaperStub, TrustReport
+from trustworthy_science.graph import build_graph, build_deep_research_graph, _make_paper_graph
+from trustworthy_science.state import DeepResearchState, GraphInput, PaperState, PaperStub, TrustReport
 
 logger = logging.getLogger(__name__)
 
@@ -154,4 +154,90 @@ class TruthFilter:
             "soft_flags": [f.code for f in ps.final.soft_flags],
             "quality_signals": [f.code for f in ps.final.quality_signals],
             "per_dimension": ps.final.per_dimension,
+            "structured_report": ps.final.structured_report,
+        }
+
+    # ------------------------------------------------------------------
+    # Deep Research
+    # ------------------------------------------------------------------
+
+    def deep_research(
+        self,
+        prompt: str,
+        top_k: int = 20,
+        min_tier: Literal["Trusted", "Caution", "Untrusted"] = "Caution",
+        collection_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Run the full Deep Research pipeline.
+
+        1. LLM generates 3–5 PubMed search queries from ``prompt``.
+        2. Papers are fetched and scored by all credibility agents.
+        3. Papers meeting ``min_tier`` are ingested into a ChromaDB collection.
+        4. A literature review with inline citations is generated from the collection.
+
+        Parameters
+        ----------
+        prompt:
+            Short description of the research task (e.g. "I want to design a
+            new cancer drug trial"). Not domain-specific — any research topic works.
+        top_k:
+            Maximum number of papers to fetch (across all queries). Capped at 30.
+        min_tier:
+            Minimum credibility tier for papers to be included in the review.
+        collection_name:
+            ChromaDB collection name. Auto-generated from a hash of ``prompt``
+            if not provided, allowing sessions to be resumed.
+
+        Returns
+        -------
+        dict with keys:
+            ``collection_name`` (str),
+            ``accepted_papers`` (list[dict]),
+            ``scored_papers`` (list[dict]),
+            ``generated_queries`` (list[str]),
+            ``literature_review`` (str),
+            ``cited_papers`` (list[dict]),
+            ``session_id`` (str).
+        """
+        from trustworthy_science.agents.literature_review import generate_literature_review
+
+        dr_graph = build_deep_research_graph(self._config)
+
+        state = DeepResearchState(
+            user_prompt=prompt,
+            top_k=min(top_k, 30),
+            min_tier=min_tier,
+            collection_name=collection_name or "",
+        )
+
+        try:
+            result_state = dr_graph.invoke(state)
+            ds = DeepResearchState(**result_state)
+        except Exception as exc:
+            logger.error("Deep research pipeline failed: %s", exc)
+            return {
+                "collection_name": "",
+                "accepted_papers": [],
+                "scored_papers": [],
+                "generated_queries": [],
+                "literature_review": f"Deep research pipeline failed: {exc}",
+                "cited_papers": [],
+                "session_id": "",
+            }
+
+        # Generate literature review from ChromaDB
+        review = generate_literature_review(
+            user_prompt=prompt,
+            collection_name=ds.collection_name,
+            config=self._config,
+        )
+
+        return {
+            "collection_name": ds.collection_name,
+            "accepted_papers": ds.accepted_papers,
+            "scored_papers": ds.scored_papers,
+            "generated_queries": ds.generated_queries,
+            "literature_review": review.narrative,
+            "cited_papers": review.cited_papers,
+            "session_id": review.session_id,
         }
