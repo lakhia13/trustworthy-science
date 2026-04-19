@@ -5,8 +5,12 @@
 
 import axios, { AxiosError, type AxiosInstance } from 'axios';
 
-// Get API URL from environment, default to localhost for development
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Get API URL from environment.
+// Empty string = relative URLs (production via Nginx proxy).
+// Falls back to localhost only when VITE_API_URL is not defined at all.
+const API_BASE = import.meta.env.VITE_API_URL !== undefined
+  ? import.meta.env.VITE_API_URL
+  : 'http://localhost:8000';
 
 // Create Axios instance with base config
 const client: AxiosInstance = axios.create({
