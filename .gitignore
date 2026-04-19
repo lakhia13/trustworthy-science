@@ -3,6 +3,8 @@
 plans/
 data/
 models/
+# Do NOT ignore the frontend mock data (needed for production build)
+!frontend/src/app/data/
 
 .pytest_cache/
 .env
