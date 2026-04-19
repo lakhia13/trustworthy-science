@@ -9,7 +9,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from trustworthy_science.api import TruthFilter
-from trustworthy_science.server.dependencies import get_truth_filter
+from trustworthy_science.server.dependencies import get_truth_filter, resolve_truth_filter
+from trustworthy_science.server.schemas import PaperResult, ScoringWeights
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -23,6 +24,7 @@ class DeepResearchRequest(BaseModel):
     top_k: int = Field(default=20, ge=1, le=30, description="Max papers to fetch and score.")
     min_tier: str = Field(default="Caution", description="Minimum credibility tier to include.")
     collection_name: Optional[str] = Field(default=None, description="Optional ChromaDB collection name.")
+    weights: Optional[ScoringWeights] = Field(default=None, description="Optional per-request scoring weight overrides.")
 
 
 class ChatRequest(BaseModel):
@@ -32,14 +34,16 @@ class ChatRequest(BaseModel):
 
 
 class DeepResearchJobStatus(BaseModel):
-    status: str                            # pending | running | completed | failed
+    status: str                                        # pending | running | completed | failed
     message: Optional[str] = None
     collection_name: Optional[str] = None
     generated_queries: List[str] = []
-    accepted_papers: List[dict] = []
-    scored_papers: List[dict] = []
+    mesh_terms: List[str] = []
+    query_metadata: List[dict] = []
+    accepted_papers: List[PaperResult] = []
+    scored_papers: List[PaperResult] = []
     literature_review: Optional[str] = None
-    cited_papers: List[dict] = []
+    cited_papers: List[PaperResult] = []
     session_id: Optional[str] = None
 
 
@@ -53,6 +57,28 @@ class ChatResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 _job_status: Dict[str, DeepResearchJobStatus] = {}
+
+
+def _coerce_paper_list(raw: list) -> List[PaperResult]:
+    """Safely coerce a list of raw dicts to PaperResult objects.
+
+    Each individual item is wrapped in try/except so a malformed paper dict
+    (e.g. an unexpected ``tier`` literal) degrades gracefully to an empty
+    ``PaperResult`` with a logged warning rather than failing the entire job.
+    """
+    results: List[PaperResult] = []
+    for item in raw:
+        try:
+            if isinstance(item, PaperResult):
+                results.append(item)
+            elif isinstance(item, dict):
+                results.append(PaperResult.from_dict(item))
+            else:
+                logger.warning("Unexpected paper item type %s; skipping", type(item))
+        except Exception as exc:
+            logger.warning("Could not coerce paper to PaperResult: %s", exc)
+            results.append(PaperResult())
+    return results
 
 
 def _run_deep_research(request: DeepResearchRequest, tf: TruthFilter, job_id: str) -> None:
@@ -71,10 +97,12 @@ def _run_deep_research(request: DeepResearchRequest, tf: TruthFilter, job_id: st
             status="completed",
             collection_name=result.get("collection_name"),
             generated_queries=result.get("generated_queries", []),
-            accepted_papers=result.get("accepted_papers", []),
-            scored_papers=result.get("scored_papers", []),
+            mesh_terms=result.get("mesh_terms", []),
+            query_metadata=result.get("query_metadata", []),
+            accepted_papers=_coerce_paper_list(result.get("accepted_papers", [])),
+            scored_papers=_coerce_paper_list(result.get("scored_papers", [])),
             literature_review=result.get("literature_review"),
-            cited_papers=result.get("cited_papers", []),
+            cited_papers=_coerce_paper_list(result.get("cited_papers", [])),
             session_id=result.get("session_id"),
         )
         logger.info("[DEEP_RESEARCH_ROUTE] Job %s completed", job_id)
@@ -108,7 +136,8 @@ def start_deep_research(
     Poll ``GET /api/deep-research/status/{job_id}`` to retrieve results.
     """
     job_id = str(uuid.uuid4())
-    background_tasks.add_task(_run_deep_research, request, tf, job_id)
+    active_tf = resolve_truth_filter(request.weights, tf)
+    background_tasks.add_task(_run_deep_research, request, active_tf, job_id)
     return {"job_id": job_id}
 
 

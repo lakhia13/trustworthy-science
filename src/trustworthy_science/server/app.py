@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from trustworthy_science.server.dependencies import init_truth_filter
@@ -48,6 +50,23 @@ def create_app() -> FastAPI:
     async def _global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         logger.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
         return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+    # CORS — read allowed origins from CORS_ORIGINS env var (comma-separated).
+    # Falls back to ["*"] when the variable is absent (development default).
+    _cors_origins_raw = os.environ.get("CORS_ORIGINS", "")
+    cors_origins: list[str] = (
+        [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+        if _cors_origins_raw
+        else ["*"]
+    )
+    logger.info("[SERVER] CORS allow_origins=%s", cors_origins)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     app.include_router(search_router,        prefix="/api/search",        tags=["search"])
     app.include_router(score_router,         prefix="/score",             tags=["scoring"])

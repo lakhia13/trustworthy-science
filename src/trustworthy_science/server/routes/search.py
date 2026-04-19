@@ -3,7 +3,7 @@ import logging
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from trustworthy_science.server.schemas import PaperResult, SearchRequest, JobResponse, JobStatus
-from trustworthy_science.server.dependencies import get_truth_filter
+from trustworthy_science.server.dependencies import get_truth_filter, resolve_truth_filter
 from trustworthy_science.api import TruthFilter
 from typing import Dict, List
 
@@ -86,7 +86,8 @@ def search_and_score_papers(
     Returns a job_id to track the scoring progress.
     """
     job_id = str(uuid.uuid4())
-    background_tasks.add_task(run_search_and_score, request, tf, job_id)
+    active_tf = resolve_truth_filter(request.weights, tf)
+    background_tasks.add_task(run_search_and_score, request, active_tf, job_id)
     return JobResponse(job_id=job_id)
 
 

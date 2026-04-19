@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 from trustworthy_science.server.schemas import ExplainRequest, PaperResult
-from trustworthy_science.server.dependencies import get_truth_filter
+from trustworthy_science.server.dependencies import get_truth_filter, resolve_truth_filter
 from trustworthy_science.api import TruthFilter
 
 logger = logging.getLogger(__name__)
@@ -16,12 +16,13 @@ def explain_paper(request: ExplainRequest, tf: TruthFilter = Depends(get_truth_f
     - **pmid**: PubMed ID (preferred; uses BioC JSON full-text, includes `per_dimension`)
     - **doi**: DOI string
     """
+    active_tf = resolve_truth_filter(request.weights, tf)
     raw: dict | None = None
     try:
         if request.pmid:
-            raw = tf.score_single_by_pmid(request.pmid)
+            raw = active_tf.score_single_by_pmid(request.pmid)
         else:
-            raw = tf.score_single(request.doi)  # type: ignore[arg-type]
+            raw = active_tf.score_single(request.doi)  # type: ignore[arg-type]
     except Exception as exc:
         logger.error("explain failed for %s: %s", request.pmid or request.doi, exc)
         raise HTTPException(status_code=500, detail=str(exc))

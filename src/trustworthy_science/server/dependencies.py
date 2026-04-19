@@ -26,3 +26,19 @@ def reload_truth_filter(config_path: str) -> None:
             init_truth_filter(config_path)
         else:
             _truth_filter.reload_config(config_path)
+
+
+def resolve_truth_filter(weights: "ScoringWeights | None", base: TruthFilter) -> TruthFilter:  # type: ignore[name-defined]
+    """Return a per-request TruthFilter with custom weights, or the singleton.
+
+    When *weights* is ``None`` (the common case), returns *base* unchanged —
+    no extra graph is built.  When *weights* carries any non-None fields, a
+    temporary ``TruthFilter`` is instantiated from a deep-copy of *base*'s
+    config with the overrides applied; the global singleton is never mutated.
+    """
+    if weights is None:
+        return base
+    from trustworthy_science.server.schemas import ScoringWeights as _SW  # local import avoids circular
+    overlay = weights.to_config_overlay(base._config)
+    return TruthFilter(config=overlay)
+

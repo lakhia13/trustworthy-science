@@ -11,7 +11,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from trustworthy_science.api import TruthFilter
-from trustworthy_science.server.dependencies import get_truth_filter
+from trustworthy_science.server.dependencies import get_truth_filter, resolve_truth_filter
 from trustworthy_science.server.schemas import PaperResult, ScoreResponse, SearchRequest
 
 logger = logging.getLogger(__name__)
@@ -33,13 +33,14 @@ def score_papers(
     Returns the full list of scored papers in a single response.
     For large batches, prefer ``POST /api/search`` (async job).
     """
+    active_tf = resolve_truth_filter(request.weights, tf)
     results: list[PaperResult] = []
     seen: set[str] = set()
 
     # Score each PMID individually (uses BioC full-text path)
     for pmid in request.pmids:
         try:
-            raw = tf.score_single_by_pmid(pmid)
+            raw = active_tf.score_single_by_pmid(pmid)
             if raw:
                 key = raw.get("doi") or raw.get("pmid") or pmid
                 if key not in seen:
@@ -51,7 +52,7 @@ def score_papers(
     # Score DOIs / text query in a single graph invocation
     if request.dois or request.query:
         try:
-            raw_list = tf.score_papers(
+            raw_list = active_tf.score_papers(
                 dois=request.dois or None,
                 query=request.query,
                 top_k=request.top_k,

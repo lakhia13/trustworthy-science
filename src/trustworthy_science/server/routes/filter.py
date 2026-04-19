@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 from trustworthy_science.server.schemas import FilterRequest, FilterResponse, PaperResult
-from trustworthy_science.server.dependencies import get_truth_filter
+from trustworthy_science.server.dependencies import get_truth_filter, resolve_truth_filter
 from trustworthy_science.api import TruthFilter
 
 logger = logging.getLogger(__name__)
@@ -15,8 +15,9 @@ def filter_papers(request: FilterRequest, tf: TruthFilter = Depends(get_truth_fi
     Results are sorted trusted-first, then by score descending. Intended for
     pre-filtering a RAG context window.
     """
+    active_tf = resolve_truth_filter(request.weights, tf)
     try:
-        raw_list = tf.filter_for_rag(
+        raw_list = active_tf.filter_for_rag(
             query=request.query,
             top_k=request.top_k,
             min_tier=request.min_tier,

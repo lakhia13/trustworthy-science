@@ -1,12 +1,47 @@
 from __future__ import annotations
+import copy
 from typing import Any, Literal, List, Optional
 from pydantic import BaseModel, Field, model_validator
+
+class ScoringWeights(BaseModel):
+    """Optional per-request scoring weight overrides.
+
+    All fields are optional — ``None`` means "keep the value from the base YAML".
+    The five fields mirror the sidebar sliders in the Streamlit UI exactly.
+    """
+    retraction_cap: Optional[float] = None
+    no_data_deposit_penalty: Optional[float] = None
+    replicated_bonus: Optional[float] = None
+    open_data_bonus: Optional[float] = None
+    methods_nudge_pct: Optional[float] = None
+
+    def to_config_overlay(self, base_config: dict) -> dict:
+        """Deep-copy *base_config* and overlay any non-None fields.
+
+        Mirrors ``streamlit_app._build_config()`` exactly:
+        all five weights live under the ``scoring`` sub-dict.
+        """
+        cfg = copy.deepcopy(base_config)
+        scoring = cfg.setdefault("scoring", {})
+        if self.retraction_cap is not None:
+            scoring["retraction_cap"] = self.retraction_cap
+        if self.no_data_deposit_penalty is not None:
+            scoring["no_data_deposit_penalty"] = self.no_data_deposit_penalty
+        if self.replicated_bonus is not None:
+            scoring["replicated_bonus"] = self.replicated_bonus
+        if self.open_data_bonus is not None:
+            scoring["open_data_bonus"] = self.open_data_bonus
+        if self.methods_nudge_pct is not None:
+            scoring["methods_nudge_pct"] = self.methods_nudge_pct
+        return cfg
+
 
 class SearchRequest(BaseModel):
     dois: list[str] = []
     pmids: list[str] = []
     query: str | None = None
     top_k: int = Field(default=10, ge=1, le=50)
+    weights: Optional[ScoringWeights] = None
 
     @model_validator(mode="after")
     def at_least_one_identifier(self) -> "SearchRequest":
@@ -18,10 +53,12 @@ class FilterRequest(BaseModel):
     query: str
     top_k: int = Field(default=20, ge=1, le=50)
     min_tier: Literal["Trusted", "Caution", "Untrusted"] = "Caution"
+    weights: Optional[ScoringWeights] = None
 
 class ExplainRequest(BaseModel):
     doi: str | None = None
     pmid: str | None = None
+    weights: Optional[ScoringWeights] = None
 
     @model_validator(mode="after")
     def exactly_one_identifier(self) -> "ExplainRequest":
