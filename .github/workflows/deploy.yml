@@ -23,8 +23,8 @@ jobs:
             echo "=== Pulling latest code ==="
             cd /var/www/trustworthy-science
             git fetch origin
-            git checkout jitesh
-            git pull origin jitesh
+            git checkout main
+            git pull origin main
 
             echo "=== Installing Python dependencies ==="
             uv pip install --no-dev .
