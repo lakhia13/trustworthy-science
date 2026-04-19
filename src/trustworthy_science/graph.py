@@ -160,12 +160,21 @@ def _make_multi_graph(config: dict | None = None):
                 score = ps.final.composite_score
                 include = tier_order.get(tier, 0) >= min_tier_val
 
+            # Prefer parsed abstract (richer) over stub abstract
+            abstract = ""
+            if ps.parsed and ps.parsed.abstract:
+                abstract = ps.parsed.abstract
+            elif ps.stub.abstract:
+                abstract = ps.stub.abstract
+
             filtered.append({
                 "title": ps.stub.title,
                 "doi": ps.stub.doi,
                 "pmid": ps.stub.pmid,
                 "year": ps.stub.year,
                 "venue": ps.stub.venue,
+                "authors": ps.stub.authors,
+                "abstract": abstract,
                 "score": score,
                 "tier": tier,
                 "include": include,
