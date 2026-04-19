@@ -1,9 +1,9 @@
-x/**
+/**
  * API client for Trustworthy Science backend.
  * Uses Axios to communicate with FastAPI REST endpoints.
  */
 
-import axios, { AxiosError, AxiosInstance } from 'axios';
+import axios, { AxiosError, type AxiosInstance } from 'axios';
 
 // Get API URL from environment, default to localhost for development
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
