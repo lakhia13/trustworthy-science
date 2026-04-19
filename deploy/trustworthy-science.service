@@ -1,0 +1,30 @@
+# systemd service for Trustworthy Science FastAPI backend
+# Copy to: /etc/systemd/system/trustworthy-science.service
+# Then run:
+#   systemctl daemon-reload
+#   systemctl enable trustworthy-science
+#   systemctl start trustworthy-science
+
+[Unit]
+Description=Trustworthy Science FastAPI Backend
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/var/www/trustworthy-science
+Environment="PATH=/var/www/trustworthy-science/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+# Load .env automatically (K2_API_KEY, NCBI_API_KEY, etc.)
+EnvironmentFile=/var/www/trustworthy-science/.env
+ExecStart=/var/www/trustworthy-science/.venv/bin/uvicorn \
+    trustworthy_science.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 2 \
+    --log-level info
+Restart=always
+RestartSec=5
+# Give the app 120s to start (sentence-transformers downloads model on first run)
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

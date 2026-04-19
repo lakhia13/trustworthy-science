@@ -1,0 +1,45 @@
+name: Deploy to DigitalOcean
+
+# Triggers on every push to the jitesh branch
+on:
+  push:
+    branches: [jitesh, main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH to Droplet
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DROPLET_IP }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # Commands run on the Droplet:
+          script: |
+            set -e
+
+            echo "=== Pulling latest code ==="
+            cd /var/www/trustworthy-science
+            git fetch origin
+            git checkout jitesh
+            git pull origin jitesh
+
+            echo "=== Installing Python dependencies ==="
+            uv pip install --no-dev .
+
+            echo "=== Building frontend ==="
+            cd frontend
+            npm ci --prefer-offline
+            npm run build
+            cd ..
+
+            echo "=== Restarting backend service ==="
+            systemctl restart trustworthy-science
+
+            echo "=== Checking service health ==="
+            sleep 5
+            systemctl is-active --quiet trustworthy-science && echo "Backend is running" || (echo "Backend failed to start!" && exit 1)
+
+            echo "=== Deploy complete ==="
